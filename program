@@ -1,0 +1,124 @@
+digraph CombinedCFGDefUse {
+  rankdir=TB;
+  compound=true;
+  nodesep=0.5;
+  ranksep=0.8;
+  node [fontname="Courier New", fontsize=10];
+  edge [fontname="Arial", fontsize=9];
+
+  // ========== BASIC BLOCKS (Grouped by Function) ==========
+  subgraph "cluster_compute" {
+    label="compute()";
+    style=filled;
+    fillcolor="#f0f8ff";
+    color="#3366cc";
+    penwidth=2;
+    fontsize=11;
+    labelloc="t";
+
+    // Arguments
+    node [shape=ellipse, style=filled, fillcolor="#d0e8ff"];
+    "compute_%b" [label="i32 %b (arg1)    VALUE=5"];
+    "compute_%a" [label="i32 %a (arg0)    VALUE=2"];
+
+    // Constants
+    node [shape=oval, style=filled, fillcolor="#e0e0e0", fontsize=8, height=0.3, width=0.5];
+    "compute::const_2" [label="i32 2    VALUE=2"];
+      "compute_%inst_5a55e138fea0" [shape=box, style=filled, fillcolor="#ffe0e0", color="#cc0000", label="  br i1 %cmp, label %if.then, label %if.end"];
+      "compute_%cmp" [shape=diamond, style=filled, fillcolor="#fff2cc", color="#ff9900", label="  %cmp = icmp sgt i32 %add, %mul"];
+      "compute_%mul" [shape=box, style=filled, fillcolor="white", color="black", label="  %mul = mul nsw i32 %a, %b    VALUE=10"];
+      "compute_%add1" [shape=box, style=filled, fillcolor="white", color="black", label="  %add1 = add nsw i32 %add, 2    VALUE=9"];
+      "compute_%add" [shape=box, style=filled, fillcolor="white", color="black", label="  %add = add nsw i32 %a, %b    VALUE=7"];
+      "compute_%inst_5a55e138fff0" [shape=box, style=filled, fillcolor="#ffe0e0", color="#cc0000", label="  br label %return"];
+      "compute_%inst_5a55e138ff80" [shape=box, style=filled, fillcolor="#ffe0e0", color="#cc0000", label="  br label %return"];
+      "compute_%inst_5a55e1390090" [shape=box, style=filled, fillcolor="#ffe0e0", color="#cc0000", label="  ret i32 %retval.0"];
+      "compute_%retval.0" [shape=hexagon, style=filled, fillcolor="#f0e0ff", color="#800080", label="  %retval.0 = phi i32 [ %add, %if.then ], [ %mul, %if.end ]"];
+  }
+
+  subgraph "cluster_main" {
+    label="main()";
+    style=filled;
+    fillcolor="#f0f8ff";
+    color="#3366cc";
+    penwidth=2;
+    fontsize=11;
+    labelloc="t";
+
+    // Arguments
+    node [shape=ellipse, style=filled, fillcolor="#d0e8ff"];
+
+    // Constants
+    node [shape=oval, style=filled, fillcolor="#e0e0e0", fontsize=8, height=0.3, width=0.5];
+    "main::const_2" [label="i32 2    VALUE=2"];
+    "main::const_5" [label="i32 5    VALUE=5"];
+    "main::const_10" [label="i32 10    VALUE=10"];
+      "main_%call" [shape=parallelogram, style=filled, fillcolor="#d9ffff", color="#1aa3a3", label="  %call = call i32 @compute(i32 noundef 2, i32 noundef 5)    VALUE=10"];
+      "main_%inst_5a55e138f9e0" [shape=box, style=filled, fillcolor="#ffe0e0", color="#cc0000", label="  ret i32 %sub"];
+      "main_%sub" [shape=box, style=filled, fillcolor="white", color="black", label="  %sub = sub nsw i32 %call, 10    VALUE=0"];
+  }
+
+
+  // ========== CFG EDGES (Control Flow) ==========
+  edge [color="#0066cc", penwidth=2.5, style=solid, arrowhead=normal];
+  "compute_%retval.0" -> "compute_%inst_5a55e1390090";
+  "compute_%inst_5a55e138fff0" -> "compute_%retval.0";
+  "compute_%inst_5a55e138ff80" -> "compute_%retval.0";
+  "compute_%inst_5a55e138fea0" -> "compute_%inst_5a55e138ff80";
+  "compute_%inst_5a55e138fea0" -> "compute_%inst_5a55e138fff0";
+  "main_%call" -> "main_%sub";
+  "compute_%cmp" -> "compute_%inst_5a55e138fea0";
+  "compute_%mul" -> "compute_%cmp";
+  "main_%sub" -> "main_%inst_5a55e138f9e0";
+  "compute_%add1" -> "compute_%mul";
+  "compute_%add" -> "compute_%add1";
+
+  // ========== DEF-USE EDGES (Data Flow) ==========
+  edge [color="black", penwidth=1.2, style=dashed, arrowhead=vee];
+  "compute_%retval.0" -> "compute_%inst_5a55e1390090";
+  "main::const_2" -> "main_%call";
+  "main::const_5" -> "main_%call";
+  "main_%call" -> "main_%sub";
+  "compute_%cmp" -> "compute_%inst_5a55e138fea0";
+  "compute_%mul" -> "compute_%cmp";
+  "compute_%mul" -> "compute_%retval.0";
+  "main_%sub" -> "main_%inst_5a55e138f9e0";
+  "main::const_10" -> "main_%sub";
+  "compute_%b" -> "compute_%add";
+  "compute_%b" -> "compute_%mul";
+  "compute_%a" -> "compute_%add";
+  "compute_%a" -> "compute_%mul";
+  "compute_%add" -> "compute_%add1";
+  "compute_%add" -> "compute_%cmp";
+  "compute_%add" -> "compute_%retval.0";
+  "compute::const_2" -> "compute_%add1";
+
+  // ========== FUNCTION CALL EDGES ==========
+  edge [color="#cc3366", penwidth=2.0, style="bold", arrowhead="vee"];
+  "main_%call" -> "compute_%add" [label="call #0", fontsize=9, fontcolor="#cc3366"];
+
+  // ========== CONSTANT/ARGUMENT INPUT EDGES ==========
+  edge [color="gray", penwidth=1, style=dotted, arrowhead=odot];
+
+  // ========== LEGEND ==========
+  subgraph "cluster_legend" {
+    label="Legend";
+    labelloc="t";
+    fontsize=11;
+    color="#888888";
+    style="rounded,filled";
+    fillcolor="#ffffff";
+    rank="min";
+    node [fontname="Arial", fontsize=10, shape=box, style="rounded,filled", fillcolor="#ffffff"];
+    "leg_call_a" [label="Call"];
+    "leg_call_b" [label=""];
+    "leg_du_a" [label="Def-Use"];
+    "leg_du_b" [label=""];
+    "leg_cfg_a" [label="CFG"];
+    "leg_cfg_b" [label=""];
+    { rank=same; "leg_call_a"; "leg_call_b"; "leg_du_a"; "leg_du_b"; "leg_cfg_a"; "leg_cfg_b"; }
+    "leg_call_a" -> "leg_call_b" [color="#cc3366", penwidth=2.0, style="bold", arrowhead="vee", label="call edges", fontcolor="#cc3366", fontsize=9];
+    "leg_du_a" -> "leg_du_b" [color="black", penwidth=1.2, style=dashed, arrowhead=vee, label="Def-Use edges", fontcolor="black", fontsize=9];
+    "leg_cfg_a" -> "leg_cfg_b" [color="#0066cc", penwidth=2.5, style=solid, arrowhead=normal, label="CFG edges", fontcolor="#0066cc", fontsize=9];
+  }
+
+}
