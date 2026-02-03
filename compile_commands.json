@@ -1,0 +1,83 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/clang++",
+      "-std=c++17",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-I/usr/lib/llvm-14/include",
+      "-fno-exceptions",
+      "-D_GNU_SOURCE",
+      "-D__STDC_CONSTANT_MACROS",
+      "-D__STDC_FORMAT_MACROS",
+      "-D__STDC_LIMIT_MACROS",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "obj/main.o",
+      "src/main.cpp"
+    ],
+    "directory": "/tmp/llvm-defuse-graph-builder",
+    "file": "/tmp/llvm-defuse-graph-builder/src/main.cpp",
+    "output": "/tmp/llvm-defuse-graph-builder/obj/main.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang++",
+      "-std=c++17",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-I/usr/lib/llvm-14/include",
+      "-fno-exceptions",
+      "-D_GNU_SOURCE",
+      "-D__STDC_CONSTANT_MACROS",
+      "-D__STDC_FORMAT_MACROS",
+      "-D__STDC_LIMIT_MACROS",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "obj/GraphVisualizer.o",
+      "src/GraphVisualizer.cpp"
+    ],
+    "directory": "/tmp/llvm-defuse-graph-builder",
+    "file": "/tmp/llvm-defuse-graph-builder/src/GraphVisualizer.cpp",
+    "output": "/tmp/llvm-defuse-graph-builder/obj/GraphVisualizer.o"
+  },
+  {
+    "arguments": [
+      "/usr/bin/clang++",
+      "-std=c++17",
+      "-O0",
+      "-g",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-fno-exceptions",
+      "-fno-rtti",
+      "-I/usr/lib/llvm-14/include",
+      "-fno-exceptions",
+      "-D_GNU_SOURCE",
+      "-D__STDC_CONSTANT_MACROS",
+      "-D__STDC_FORMAT_MACROS",
+      "-D__STDC_LIMIT_MACROS",
+      "-Iinclude",
+      "-c",
+      "-o",
+      "obj/Instrumentation.o",
+      "src/Instrumentation.cpp"
+    ],
+    "directory": "/tmp/llvm-defuse-graph-builder",
+    "file": "/tmp/llvm-defuse-graph-builder/src/Instrumentation.cpp",
+    "output": "/tmp/llvm-defuse-graph-builder/obj/Instrumentation.o"
+  }
+]

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# TODO[flops]: This script is meant to test tests/simple, so better move it to tests/simple
+
 # запускать из корня проекта: ./run_simple.sh
 
 mkdir -p llvm logs outputs/simple/static outputs/simple/runtime

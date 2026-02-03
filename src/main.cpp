@@ -1,4 +1,13 @@
-#include "../include/GraphVisualizer.h"
+// FIXME[flops]: Don't use relative includes, better to pass -Iinclude and:
+// [flops]: #include "GraphVisualizer.h"
+// [flops]: #include "Instrumentation.h"
+
+// FIXME [Dkay]: Agreed with flops
+
+// FIXME [Dkay]: Probably its unsafe to call std::system like you do, but I won't prove it
+// think about the case when user enters `sudo rm -rf /` as program's input
+
+#include "../include/GraphVisualizer.h" 
 #include "../include/Instrumentation.h"
 
 #include "llvm/IR/LLVMContext.h"
@@ -11,6 +20,13 @@
 #include <memory>
 #include <string>
 
+// [flops]: Just note that c++20 provides ends_with method: http://en.cppreference.com/w/cpp/string/basic_string/ends_with
+
+// [Dkay]: Disagree with flops. Build system uses --std=c++17, so it is ok to implement such method
+//         HOWEVER, Why is it located in main.cpp file?
+//         main() всегда должен идти первым, иначе придется его искать, я же спрашивал это на сдачах
+//
+// FIXME [Dkay]: Get rid of one-letter naming!!
 static bool endsWith(const std::string &s, const std::string &suffix) {
   if (s.size() < suffix.size())
     return false;
@@ -18,9 +34,9 @@ static bool endsWith(const std::string &s, const std::string &suffix) {
   return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-static void printHelp() {
-  std::cout << "LLVM Def-Use Graph Builder\n\n"
-            << "Usage:\n"
+static void printHelp() { // TODO[flops]: Use argv[0] there instead of ./bin/defuse-analyzer
+                          // Dkay: +
+  std::cout << "LLVM Def-Use Graph Builder\n\n" << "Usage:\n"
             << "  ./bin/defuse-analyzer --help\n"
             << "  ./bin/defuse-analyzer -analyze <input.c|input.ll> [out_dir]\n"
             << "\n"
@@ -43,15 +59,18 @@ static bool runCmd(const std::string &cmd) {
   return rc == 0;
 }
 
-static void ensureDir(const std::string &path) {
-  std::string cmd = "mkdir -p \"" + path + "\"";
+static void ensureDir(const std::string &path) { // TODO[flops]: Rename it into makeDir, getOrCreateDir or something else
+  std::string cmd = "mkdir -p \"" + path + "\""; // FIXME[dkay]: Why not to use runCmd there
   (void)std::system(cmd.c_str());
 }
 
 static std::string getOptMem2RegCmd() {
-  if (std::system("which opt > /dev/null 2>&1") != 0)
+  // FIXME[dkay]: Why not to use runCmd there
+  if (std::system("which opt > /dev/null 2>&1") != 0) // [flops]: Check build.sh
     return "";
 
+  // [flops]: You can pre-check format of opt commands on build stage too
+  // TODO[Dkay]: You can use llvm-config version to pre-check 
   if (std::system("opt -S -passes=mem2reg --help > /dev/null 2>&1") == 0)
     return "opt -S -passes=mem2reg";
 
@@ -67,16 +86,20 @@ static bool emitllFromC(const std::string &cFile, const std::string &outLl) {
   return runCmd(cmd);
 }
 
+// FIXME[Dkay]: Why all of these function are in main.cpp???
 static bool mem2reg(const std::string &inLl, const std::string &outLl) {
-  std::string optCmd = getOptMem2RegCmd();
+  std::string optCmd = getOptMem2RegCmd(); // FIXME[Dkay] use std::optional for such cases
+  
   if (optCmd.empty()) {
     std::cerr << "error: opt not found (install llvm)\n";
     return false;
   }
-  std::string cmd = optCmd + " \"" + inLl + "\" -o \"" + outLl + "\"";
+  std::string cmd = optCmd + " \"" + inLl + "\" -o \"" + outLl + "\""; // FIXME[Dkay]: use std::filesystem::path
   return runCmd(cmd);
 }
 
+// FIXME[Dkay]: different functions naming style
+// why the fuck this exists??
 static bool instrumentll(const std::string &inLl, const std::string &outLl) {
   Instrumentation inst;
   return inst.instrumentModule(inLl, outLl);
@@ -85,8 +108,12 @@ static bool instrumentll(const std::string &inLl, const std::string &outLl) {
 static bool buildAndRun(const std::string &instrumentedLl,
                         const std::string &outRuntimeLog,
                         const std::string &outExe) {
-  std::string exePath = outExe.empty() ? "program" : outExe;
+  // FIXME[Dkay]: buildAndRun function should rely on some constrains of arguments,
+  // it shoud expect outExe not to be empty and check that is assert
+  // the default value if outExe param should be set in argument parser function
+  std::string exePath = outExe.empty() ? "program" : outExe; // FIXME[flops]: Unsafe fallback to the `program`, give loud error and return false there
 
+  // FIXME[flops]: fail on launch from different directories, because of hardcoded `runtime/core_runtime.c`
   std::string buildCmd = "clang -O0 runtime/core_runtime.c \"" +
                          instrumentedLl + "\" -o \"" + exePath + "\"";
   if (!runCmd(buildCmd)) {
@@ -109,7 +136,8 @@ static bool loadModule(const std::string &llFile,
                        llvm::LLVMContext &ctx) {
   llvm::SMDiagnostic err;
   outModule = llvm::parseIRFile(llFile, err, ctx);
-  if (!outModule) {
+  if (!outModule) { // TODO[Dkay]: Use some logging + return macro, since I dont want to have debug output in production mode
+                    // return std::optional / std::expected in such cases
     std::cerr << "error: can't read IR: " << llFile << "\n";
     err.print(llFile.c_str(), llvm::errs());
     return false;
@@ -130,31 +158,35 @@ static bool buildGraph(const std::string &llFile, const std::string &runtimeLog,
     return false;
   }
 
-  vis.printStatistics();
+  vis.printStatistics(); // TODO[Dkay]: why to print stats even in production mode?
 
   if (!vis.exportToDot(outDot)) {
     std::cerr << "error: exportToDot failed\n";
     return false;
   }
 
-  if (std::system("which dot > /dev/null 2>&1") == 0) {
-    std::string png = outDot;
+  if (std::system("which dot > /dev/null 2>&1") == 0) { // FIXME [Dkay]: Why to use std::system if you have run cmd?
+    std::string png = outDot; 
     std::string svg = outDot;
 
     if (endsWith(png, ".dot")) {
-      png = png.substr(0, png.size() - 4) + ".png";
+      png = png.substr(0, png.size() - 4) + ".png"; // FIXME[flops]: Magic constants
       svg = svg.substr(0, svg.size() - 4) + ".svg";
     } else {
       png += ".png";
       svg += ".svg";
     }
+    // FIXME[flops]: Two copies is not the best approach here, jus append extension to outDot
     runCmd("dot -Tpng \"" + outDot + "\" -o \"" + png + "\" 2>/dev/null");
     runCmd("dot -Tsvg \"" + outDot + "\" -o \"" + svg + "\" 2>/dev/null");
   }
+
+  // FIXME[Dkay] Is dot does not exists on PC, you still return true?
+  // why build graph function does something besides building graph like checking if dot binary exists...
   return true;
 }
 
-static std::string baseNameNoExt(const std::string &path) {
+static std::string baseNameNoExt(const std::string &path) { // FIXME [Dkay]: this is std::filesystem function
   std::string s = path;
   size_t slash = s.find_last_of("/\\");
   if (slash != std::string::npos)
@@ -165,14 +197,17 @@ static std::string baseNameNoExt(const std::string &path) {
   return s;
 }
 
-static int doAnalyze(const std::string &inputFile, const std::string &outDir) {
+// FIXME [Dkay]: bad naming: what is analyzing, which analyses?
+//
+static int doAnalyze(const std::string &inputFile, const std::string &outDir) { 
   std::string name = baseNameNoExt(inputFile);
   std::string root = outDir.empty() ? ("outputs/" + name) : outDir;
 
-  std::string llvmDir = root + "/llvm";
+  std::string llvmDir = root + "/llvm"; // TODO[Dkay]: use std::filesystem, use const
   ensureDir(root);
   ensureDir(llvmDir);
-
+  
+  // TODO [Dkay]: worsdt naming ever.
   std::string ll0 = llvmDir + "/" + name + ".ll";
   std::string ll1 = llvmDir + "/" + name + "_m2r.ll";
   std::string instLl = llvmDir + "/" + name + "_instrumented.ll";
@@ -182,11 +217,11 @@ static int doAnalyze(const std::string &inputFile, const std::string &outDir) {
 
   std::string irForGraph;
 
-  if (endsWith(inputFile, ".c")) {
+  if (endsWith(inputFile, ".c")) { // TODO[Dkay]: Why dispatching is in the same fucntion?
     std::cout << "[1/5] clang -> LLVM IR\n";
     if (!emitllFromC(inputFile, ll0)) {
       std::cerr << "error: clang failed\n";
-      return 2;
+      return 2; // FIXME [Dkay]: magic consts
     }
     irForGraph = ll0;
   } else if (endsWith(inputFile, ".ll")) {
@@ -225,17 +260,19 @@ static int doAnalyze(const std::string &inputFile, const std::string &outDir) {
   std::cout << "  log:  " << rtLog << "\n";
   std::cout << "  dot:  " << dot << "\n";
   if (endsWith(dot, ".dot")) {
-    std::cout << "  png:  " << dot.substr(0, dot.size() - 4) << ".png\n";
+    std::cout << "  png:  " << dot.substr(0, dot.size() - 4) << ".png\n"; // TODO[flops]: This is part of buildGraph too, separate it and reuse 
     std::cout << "  svg:  " << dot.substr(0, dot.size() - 4) << ".svg\n";
   }
   return 0;
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    printHelp();
+  if (argc < 2) { // [flops]: Note if your prog must take at least one argument then it's better to use them without `-` prefix, like `defuse-analyzer analyze` (This is similar to git add e.t.c)
+    printHelp(); // [flops]: But that's cool that you control program scenarios via cli args
     return 1;
   }
+
+  // TODO[flops]: There are a lot of path / string utils there, transfer it to separate file / use funcs from LLVM / C++ stdlib 
 
   std::string cmd = argv[1];
 
@@ -288,9 +325,9 @@ int main(int argc, char **argv) {
       return buildAndRun(argv[2], argv[3], exe) ? 0 : 2;
     }
 
-    if (cmd == "-graph") {
+    if (cmd == "-graph") { // TODO[Dkay]: argument parsing / dispatching should be a function
       if (argc < 3) {
-        std::cerr << "error: -graph <in.ll> [runtime.log] [out.dot]\n";
+        std::cerr << "error: -graph <in.ll> [runtime.log] [out.dot]\n";  // TODO[Dkay]: Should be a function
         return 1;
       }
       std::string inLl = argv[2];
@@ -301,9 +338,10 @@ int main(int argc, char **argv) {
 
     std::cerr << "error: unknown option: " << cmd << "\n";
     printHelp();
-    return 1;
+    return 1; // FIXME [Dkay]: magic const
   }
-
+  
+  // TODO[DKay]: next two lines looks like a function to me
   std::cerr << "error: unknown command: " << cmd << "\n";
   printHelp();
   return 1;

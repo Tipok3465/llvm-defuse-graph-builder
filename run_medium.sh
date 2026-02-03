@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# FIXME[DKay]: Move ot makefile system
+# TODO[flops]: This script is meant to test tests/medium, so better move it to tests/medium
+
 # запускать из корня проекта: ./run_medium.sh
 
 mkdir -p llvm logs outputs/medium/static outputs/medium/runtime

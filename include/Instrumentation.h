@@ -1,10 +1,11 @@
 #ifndef INSTRUMENTATION_H
 #define INSTRUMENTATION_H
 
-#include <sstream>
+#include <sstream> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <string>
 #include <unordered_set>
 
+// FIXME[Dkay]: He was afraid of `include`. But why.
 namespace llvm {
 class Module;
 class Function;
@@ -17,8 +18,15 @@ class Type;
 class Instrumentation {
 public:
   Instrumentation();
-  ~Instrumentation();
 
+  // FIXME[Dkay]: Class should be either marked final or have an virtual dtor
+  // FIXME[Dkay]: break of the rule of zero: class has untrivial dtor
+  // FIXME[Dkay]: break of the rule of five: class has untrivial dtor and has not copy-, move- operators and copy-, move- ctors
+  ~Instrumentation();
+  
+  // TODO[Dkay]: why `Module` is not a field?
+  // This class almost doesn't store any state and that's weird.
+  // Pass some args to ctor, save them as fields and make your methods interface thiner
   bool instrumentModule(const std::string &inputFile,
                         const std::string &outputFile);
 

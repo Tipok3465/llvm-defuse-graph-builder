@@ -1,4 +1,4 @@
-#include "../include/Instrumentation.h"
+#include "../include/Instrumentation.h" // TODO[Dkay]: avoid relative includes
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -6,28 +6,39 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/Support/Format.h"
+#include "llvm/Support/Format.h" // TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
+// FIXME[Dkay]: I want a detailed explanation why do you need next two lines. I
+// don't see any overloading resolution problems and I don't see any cases you
+// want to explicitly mark ctor and dtor as default for.
 Instrumentation::Instrumentation() = default;
 Instrumentation::~Instrumentation() = default;
 
+// FIXME[Dkay]: Why does it not take Module?
 bool Instrumentation::instrumentModule(const std::string &inputFile,
                                        const std::string &outputFile) {
   LLVMContext context;
   SMDiagnostic error;
   std::unique_ptr<Module> module = parseIRFile(inputFile, error, context);
   if (!module) {
+    // FIXME[Dkay]: make loggig turnable off, make such checks via template
+    // function or define
     errs() << "Error: Failed to load module: " << inputFile << "\n";
     return false;
   }
+
+  // FIXME[Dkay]: Why do you want to store this as a field if you clear it?
   instrumentedValues_.clear();
+
+  // FIXME[DKay]: Why these function exist? They are way too single-purposed.
   getOrDeclarePrintI32WithId(*module);
   getOrDeclarePrintI64WithId(*module);
   getOrDeclarePrintFloatWithId(*module);
+
   for (auto &function : *module) {
     if (function.isDeclaration())
       continue;
@@ -50,13 +61,18 @@ void Instrumentation::instrumentFunction(Function &function, Module &module) {
 
   // instrument function arguments
   for (auto &arg : function.args()) {
-    instrumentValue(&arg, module, funcName, "arg");
+    instrumentValue(&arg, module, funcName,
+                    "arg"); // FIXME[Dkay] Why do you use string as ardtype?
+                            // Make it enum, please. Это же базовые навыки
+                            // которым я учил вас на курсе, ну Даня блин(
   }
 
   // instrument all instructions
   for (auto &block : function) {
     for (auto &instr : block) {
       // skip phi nodes, because it's a pain in the ass
+      // FIXME[Dkay] Why not to insert yopur pass before phi nodes start to
+      // exist?
       if (isa<PHINode>(&instr)) {
         continue;
       }
@@ -81,10 +97,13 @@ void Instrumentation::instrumentFunction(Function &function, Module &module) {
   }
 }
 
-void Instrumentation::instrumentValue(Value *value, Module &module,
-                                      const std::string &funcName,
-                                      const std::string &valueType) {
-  if (!value)
+void Instrumentation::instrumentValue(
+    Value *value, Module &module, const std::string &funcName,
+    const std::string &valueType) { // FIXME[Dkay]: my LSP says that this param
+                                    // is unused. Pls, setup yours too
+  if (!value) // FIXME[Dkay]: Why method can revieve an null pointer? Why it is
+              // not privat and class invariants are not saving it from null
+              // values?
     return;
 
   Type *type = value->getType();
@@ -101,6 +120,7 @@ void Instrumentation::instrumentValue(Value *value, Module &module,
 
   std::string valueName;
 
+  // FIXME[Dkay] Following code is unreadable
   if (Instruction *instr = dyn_cast<Instruction>(value)) {
     if (instr->hasName()) {
       valueName = "%" + instr->getName().str();
@@ -166,7 +186,8 @@ Constant *Instrumentation::createGlobalString(Module &module,
 std::string Instrumentation::getValueId(Value *value,
                                         const std::string &funcName) {
 
-  if (!value)
+  if (!value) // FIXME[DKay]: This should never be true since this is a method
+              // protected by class' invariants
     return funcName + "_null";
 
   if (Instruction *instr = dyn_cast<Instruction>(value)) {
@@ -198,10 +219,11 @@ std::string Instrumentation::getValueId(Value *value,
   return funcName + "::val";
 }
 
-void Instrumentation::insertPrintCall(Module &module, Function &printFunc,
-                                      Value *value, Constant *idStr,
-                                      Constant *nameStr,
-                                      const std::string &funcName) {
+void Instrumentation::insertPrintCall(
+    Module &module, Function &printFunc, Value *value, Constant *idStr,
+    Constant *nameStr,
+    const std::string &funcName) { // FIXME[Dkay]: my LSP says that this param
+                                   // is unused. Pls, setup yours too
   Instruction *insertPoint = nullptr;
 
   if (Instruction *instr = dyn_cast<Instruction>(value)) {
@@ -231,16 +253,19 @@ void Instrumentation::insertPrintCall(Module &module, Function &printFunc,
   }
 }
 
+// FIXME[Dkay]: Function is a way too specialized.
 Function *Instrumentation::getOrDeclarePrintI32WithId(Module &module) {
   return getOrDeclarePrintFunction(module, "print_i32_with_id",
                                    Type::getInt32Ty(module.getContext()));
 }
 
+// FIXME[Dkay]: Function is a way too specialized.
 Function *Instrumentation::getOrDeclarePrintI64WithId(Module &module) {
   return getOrDeclarePrintFunction(module, "print_i64_with_id",
                                    Type::getInt64Ty(module.getContext()));
 }
 
+// FIXME[Dkay]: Function is a way too specialized.
 Function *Instrumentation::getOrDeclarePrintFloatWithId(Module &module) {
   return getOrDeclarePrintFunction(module, "print_float_with_id",
                                    Type::getFloatTy(module.getContext()));
@@ -264,10 +289,14 @@ Function *Instrumentation::getOrDeclarePrintFunction(Module &module,
   params.push_back(i8PtrType);
   params.push_back(i8PtrType);
 
+  // FIXME[DKay]: Why not to use in-place creation of a vector
+  // like this:
+  //  FunctionType *funcType = FunctionType::get(voidType, {valueType, i8PtrType, i8PtrType}, false);
+  
   FunctionType *funcType = FunctionType::get(voidType, params, false);
 
   func = Function::Create(funcType, GlobalValue::ExternalLinkage, name, module);
-  func->setCallingConv(CallingConv::C);
+  func->setCallingConv(CallingConv::C); // FIXME[Dkay] Why? Isn't it default?
 
   return func;
 }

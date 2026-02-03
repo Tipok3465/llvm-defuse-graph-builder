@@ -1,7 +1,7 @@
-#include "../include/GraphVisualizer.h"
-#include <algorithm>
+#include "../include/GraphVisualizer.h" // TODO[Dkay]: avoid relative includes
+#include <algorithm> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <fstream>
-#include <iomanip>
+#include <iomanip> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <iostream>
 #include <sstream>
 
@@ -22,27 +22,37 @@ using namespace llvm;
 
 GraphVisualizer::GraphVisualizer() : runtimeValuesLoaded_(false) {}
 
+// FIXME[Dkay] IN THE NAME OF GOD WHY THE FUCK
 GraphVisualizer::~GraphVisualizer() {}
 
+// FIXME[Dkay] Bro. I'm tilted as fuck. I have NOT taught you like that. Why
+// the fuck do you have a 300+ LOC function?
 bool GraphVisualizer::buildCombinedGraph(Module &module,
                                          const std::string &runtimeLogFile) {
-
-  nodes_.clear();
+  // FIXME[Dkay]: if you need to reset those fields, then why do you store them
+  // as fields and not locals?
+  nodes_.clear(); // TODO[flops]: Make reset method and use it there
   basicBlocks_.clear();
   runtimeValues_.clear();
   functionCalls_.clear();
   functionToEntryNode_.clear();
   runtimeValuesLoaded_ = false;
 
+  // FIXME[Dkay]: i dont want logging in production mode. make it turnable-off
+  // with defines, or some logging lib
   std::cout << "Building combined CFG + Def-Use graph...\n";
 
   if (!runtimeLogFile.empty()) {
-    runtimeValuesLoaded_ = loadRuntimeValues(runtimeLogFile);
+    runtimeValuesLoaded_ = loadRuntimeValues(
+        runtimeLogFile); // TODO [Dkay] Why return value is used only for
+                         // logging? What if its broken? You just continue
+                         // execution
     if (runtimeValuesLoaded_) {
       std::cout << "  Loaded " << runtimeValues_.size() << " runtime values\n";
     }
   }
 
+  // FIXME[Dkay]: Why this is not a method?
   // create nodes for all functions, basic blocks, instructions, arguments
   for (auto &function : module) {
     if (function.isDeclaration())
@@ -51,7 +61,12 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
 
     for (auto &arg : function.args()) {
       std::string nodeId = getNodeId(&arg);
-      GraphNode node;
+      GraphNode node; // [flops]: Use = designated initializer GraphNode node =
+                      // {.id=nodeId, ...};
+
+      // FIXME[Dkay]: At the point of this comment you have a GraphNode instance
+      // with broken invariants, please, learn more about classes and
+      // constructors before using them
       node.id = nodeId;
       node.label = getValueLabel(&arg);
       node.type = "argument";
@@ -63,12 +78,17 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
       node.value = &arg;
       node.functionName = funcName;
 
+      // FIXME[Dkay]: Why this is not a method? + What is happend here is
+      // unclear to me. Please, work on architecture of your solution
+      //
       // runtime value for args
       if (runtimeValuesLoaded_) {
         std::string argName = arg.getName().str();
         std::vector<std::string> possibleKeys = {
             nodeId, funcName + "_%" + argName, "%" + argName, argName};
 
+        // TODO[Dkay]: As I said above its unclear to me, but you probably can
+        // use some regular expressions here
         for (const auto &key : possibleKeys) {
           auto it = runtimeValues_.find(key);
           if (it != runtimeValues_.end() && !it->second.empty()) {
@@ -291,6 +311,8 @@ bool GraphVisualizer::loadRuntimeValues(const std::string &logFile) {
   std::string line;
   int cnt = 0;
 
+  // TODO [Dkay]: You can use Json and save yourself from weird parsing. LLVM
+  // also has json lib.
   while (std::getline(log, line)) {
     if (line.empty())
       continue;
@@ -322,7 +344,8 @@ bool GraphVisualizer::loadRuntimeValues(const std::string &logFile) {
 
 std::string GraphVisualizer::getNodeId(Value *value) const {
   if (!value)
-    return "null";
+    return "null"; // FIXME[Dkay]: use enum or other language error-ahndling
+                   // system, not magic string constant
 
   std::stringstream ss;
 
@@ -343,7 +366,8 @@ std::string GraphVisualizer::getNodeId(Value *value) const {
     ss << "const_" << ci->getSExtValue();
     return ss.str();
   } else {
-    ss << "val_" << std::hex << (uintptr_t)value;
+    ss << "val_" << std::hex
+       << (uintptr_t)value; // TODO[flops]: Use static_cast
     return ss.str();
   }
 }
@@ -384,6 +408,8 @@ std::string GraphVisualizer::getValueLabel(Value *value) const {
   return rso.str();
 }
 
+// TODO[Dkay]: Use some DSL on defines or templates here
+// see class Value::~Value() method in llvm for an example.
 std::string GraphVisualizer::getInstructionType(Instruction *instr) const {
   if (!instr)
     return "unknown";
@@ -476,7 +502,11 @@ std::string GraphVisualizer::getBasicBlockLabel(BasicBlock &block) const {
 bool GraphVisualizer::exportToDot(const std::string &filename) const {
   std::ofstream out(filename);
   if (!out.is_open()) {
-    std::cerr << "Error: Cannot open file: " << filename << "\n";
+    std::cerr << "Error: Cannot open file: " << filename
+              << "\n"; // FIXME[Dkay]: I don't like your error-handling system.
+                       // Somewhere it returns false in case of error. Somewhere
+                       // it returns "null" string. Make it in one same way for
+                       // every function
     return false;
   }
 
@@ -755,7 +785,7 @@ std::string GraphVisualizer::getInstructionName(Instruction &instr) const {
 std::string
 GraphVisualizer::getShortInstructionLabel(const GraphNode &node) const {
   if (!node.value)
-    return "null";
+    return "null"; // FIXME[Dkay]: Use std:optional / std::expected / enum
 
   Instruction *instr = dyn_cast<Instruction>(node.value);
   if (!instr)
@@ -778,6 +808,8 @@ GraphVisualizer::getShortInstructionLabel(const GraphNode &node) const {
   return rso.str();
 }
 
+// FIXME[Dkay]: Why printStatistics function does somesing besindes printing
+// statistcs?
 void GraphVisualizer::printStatistics() const {
   int instrCount = 0;
   int constCount = 0;
@@ -799,6 +831,7 @@ void GraphVisualizer::printStatistics() const {
     duEdges += pair.second.defUseSuccessors.size();
   }
 
+  // FIXME[Dkay]: Why to call std::cout 9 times, instead of one?
   std::cout << "\n=== GRAPH STATISTICS ===\n";
   std::cout << "Basic Blocks:      " << bbCount << "\n";
   std::cout << "Instructions:      " << instrCount << "\n";

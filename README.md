@@ -96,3 +96,4 @@ graph:
 
 --- 
 
+// TODO[flops]: Briefly describe every command and include outputs of each step

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# TODO[flops]: This script is meant to test tests/complex, so better move it to tests/complex
+
 # запускать из корня проекта: ./run_complex.sh
 
 mkdir -p llvm logs outputs/complex/static outputs/complex/runtime
