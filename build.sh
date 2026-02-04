@@ -10,7 +10,7 @@ CXX=${CXX:-clang++}
 # TODO[flops]: On build stage you also can spot where opt tool is located, abort build & force user to provide correct path and pass it as macro to the app 
 # [flops]: (instead of std::system("which opt > /dev/null 2>&1") != 0)) in app runtime.
 
-CXXFLAGS="-std=c++17 -O0 -g -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti" # TODO[flops]: Add -Iinclude
+CXXFLAGS="-std=c++17 -O0 -g -Wall -Wextra -Wpedantic -fno-exceptions -fno-rtti -Iinclude"
 LLVM_CXXFLAGS="$($LLVM_CONFIG --cxxflags | sed 's/-std=c++[^ ]*//g')"
 LLVM_LDFLAGS="$($LLVM_CONFIG --ldflags)"
 LLVM_LIBS="$($LLVM_CONFIG --libs core irreader support analysis)"

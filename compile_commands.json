@@ -10,8 +10,10 @@
       "-Wpedantic",
       "-fno-exceptions",
       "-fno-rtti",
-      "-I/usr/lib/llvm-14/include",
+      "-Iinclude",
+      "-I/usr/lib/llvm-18/include",
       "-fno-exceptions",
+      "-funwind-tables",
       "-D_GNU_SOURCE",
       "-D__STDC_CONSTANT_MACROS",
       "-D__STDC_FORMAT_MACROS",
@@ -22,9 +24,9 @@
       "obj/main.o",
       "src/main.cpp"
     ],
-    "directory": "/tmp/llvm-defuse-graph-builder",
-    "file": "/tmp/llvm-defuse-graph-builder/src/main.cpp",
-    "output": "/tmp/llvm-defuse-graph-builder/obj/main.o"
+    "directory": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder",
+    "file": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder/src/main.cpp",
+    "output": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder/obj/main.o"
   },
   {
     "arguments": [
@@ -37,8 +39,10 @@
       "-Wpedantic",
       "-fno-exceptions",
       "-fno-rtti",
-      "-I/usr/lib/llvm-14/include",
+      "-Iinclude",
+      "-I/usr/lib/llvm-18/include",
       "-fno-exceptions",
+      "-funwind-tables",
       "-D_GNU_SOURCE",
       "-D__STDC_CONSTANT_MACROS",
       "-D__STDC_FORMAT_MACROS",
@@ -49,9 +53,9 @@
       "obj/GraphVisualizer.o",
       "src/GraphVisualizer.cpp"
     ],
-    "directory": "/tmp/llvm-defuse-graph-builder",
-    "file": "/tmp/llvm-defuse-graph-builder/src/GraphVisualizer.cpp",
-    "output": "/tmp/llvm-defuse-graph-builder/obj/GraphVisualizer.o"
+    "directory": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder",
+    "file": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder/src/GraphVisualizer.cpp",
+    "output": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder/obj/GraphVisualizer.o"
   },
   {
     "arguments": [
@@ -64,8 +68,10 @@
       "-Wpedantic",
       "-fno-exceptions",
       "-fno-rtti",
-      "-I/usr/lib/llvm-14/include",
+      "-Iinclude",
+      "-I/usr/lib/llvm-18/include",
       "-fno-exceptions",
+      "-funwind-tables",
       "-D_GNU_SOURCE",
       "-D__STDC_CONSTANT_MACROS",
       "-D__STDC_FORMAT_MACROS",
@@ -76,8 +82,8 @@
       "obj/Instrumentation.o",
       "src/Instrumentation.cpp"
     ],
-    "directory": "/tmp/llvm-defuse-graph-builder",
-    "file": "/tmp/llvm-defuse-graph-builder/src/Instrumentation.cpp",
-    "output": "/tmp/llvm-defuse-graph-builder/obj/Instrumentation.o"
+    "directory": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder",
+    "file": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder/src/Instrumentation.cpp",
+    "output": "/home/dany/dev/cpp_projects/llvm-defuse-graph-builder/obj/Instrumentation.o"
   }
 ]

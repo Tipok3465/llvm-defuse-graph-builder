@@ -1,8 +1,6 @@
-#include "../include/GraphVisualizer.h" // TODO[Dkay]: avoid relative includes
-#include <algorithm> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <fstream>
-#include <iomanip> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <iostream>
+#include <set>
 #include <sstream>
 
 #include "GraphVisualizer.h"

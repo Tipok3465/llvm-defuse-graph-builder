@@ -1,4 +1,4 @@
-#include "../include/Instrumentation.h" // TODO[Dkay]: avoid relative includes
+#include "Instrumentation.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -6,7 +6,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
-#include "llvm/Support/Format.h" // TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -61,10 +60,7 @@ void Instrumentation::instrumentFunction(Function &function, Module &module) {
 
   // instrument function arguments
   for (auto &arg : function.args()) {
-    instrumentValue(&arg, module, funcName,
-                    "arg"); // FIXME[Dkay] Why do you use string as ardtype?
-                            // Make it enum, please. Это же базовые навыки
-                            // которым я учил вас на курсе, ну Даня блин(
+    instrumentValue(&arg, module, funcName);
   }
 
   // instrument all instructions
@@ -78,7 +74,7 @@ void Instrumentation::instrumentFunction(Function &function, Module &module) {
       }
 
       // instrument the instruction itself
-      instrumentValue(&instr, module, funcName, "instr");
+      instrumentValue(&instr, module, funcName);
 
       // instrument all operands
       for (unsigned i = 0; i < instr.getNumOperands(); i++) {
@@ -90,17 +86,15 @@ void Instrumentation::instrumentFunction(Function &function, Module &module) {
         }
 
         if (isa<ConstantInt>(operand) || isa<ConstantFP>(operand)) {
-          instrumentValue(operand, module, funcName, "const");
+          instrumentValue(operand, module, funcName);
         }
       }
     }
   }
 }
 
-void Instrumentation::instrumentValue(
-    Value *value, Module &module, const std::string &funcName,
-    const std::string &valueType) { // FIXME[Dkay]: my LSP says that this param
-                                    // is unused. Pls, setup yours too
+void Instrumentation::instrumentValue(Value *value, Module &module,
+                                      const std::string &funcName) {
   if (!value) // FIXME[Dkay]: Why method can revieve an null pointer? Why it is
               // not privat and class invariants are not saving it from null
               // values?
@@ -152,13 +146,13 @@ void Instrumentation::instrumentValue(
 
   if (type->isIntegerTy(32)) {
     insertPrintCall(module, *getOrDeclarePrintI32WithId(module), value, idStr,
-                    nameStr, funcName);
+                    nameStr);
   } else if (type->isIntegerTy(64)) {
     insertPrintCall(module, *getOrDeclarePrintI64WithId(module), value, idStr,
-                    nameStr, funcName);
+                    nameStr);
   } else if (type->isFloatTy()) {
     insertPrintCall(module, *getOrDeclarePrintFloatWithId(module), value, idStr,
-                    nameStr, funcName);
+                    nameStr);
   }
   instrumentedValues_.insert(valueId);
 }
@@ -219,11 +213,9 @@ std::string Instrumentation::getValueId(Value *value,
   return funcName + "::val";
 }
 
-void Instrumentation::insertPrintCall(
-    Module &module, Function &printFunc, Value *value, Constant *idStr,
-    Constant *nameStr,
-    const std::string &funcName) { // FIXME[Dkay]: my LSP says that this param
-                                   // is unused. Pls, setup yours too
+void Instrumentation::insertPrintCall(Module &module, Function &printFunc,
+                                      Value *value, Constant *idStr,
+                                      Constant *nameStr) {
   Instruction *insertPoint = nullptr;
 
   if (Instruction *instr = dyn_cast<Instruction>(value)) {
@@ -282,7 +274,7 @@ Function *Instrumentation::getOrDeclarePrintFunction(Module &module,
   LLVMContext &ctx = module.getContext();
 
   Type *voidType = Type::getVoidTy(ctx);
-  Type *i8PtrType = Type::getInt8PtrTy(ctx);
+  Type *i8PtrType = Type::getInt8Ty(ctx);
 
   std::vector<Type *> params;
   params.push_back(valueType);
@@ -291,8 +283,9 @@ Function *Instrumentation::getOrDeclarePrintFunction(Module &module,
 
   // FIXME[DKay]: Why not to use in-place creation of a vector
   // like this:
-  //  FunctionType *funcType = FunctionType::get(voidType, {valueType, i8PtrType, i8PtrType}, false);
-  
+  //  FunctionType *funcType = FunctionType::get(voidType, {valueType,
+  //  i8PtrType, i8PtrType}, false);
+
   FunctionType *funcType = FunctionType::get(voidType, params, false);
 
   func = Function::Create(funcType, GlobalValue::ExternalLinkage, name, module);

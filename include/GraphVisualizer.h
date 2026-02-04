@@ -2,9 +2,7 @@
 #define GRAPH_VISUALIZER_H
 
 #include "llvm/IR/Value.h"
-#include <cstdint> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <map>
-#include <set> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -26,7 +24,8 @@ public:
 
   // FIXME[Dkay]: Class should be either marked final or have an virtual dtor
   // FIXME[Dkay]: break of the rule of zero: class has untrivial dtor
-  // FIXME[Dkay]: break of the rule of five: class has untrivial dtor and has not copy-, move- operators and copy-, move- ctors
+  // FIXME[Dkay]: break of the rule of five: class has untrivial dtor and has
+  // not copy-, move- operators and copy-, move- ctors
   ~GraphVisualizer();
 
   bool buildCombinedGraph(llvm::Module &module,
@@ -37,7 +36,8 @@ public:
   void printStatistics() const;
 
 private:
-  // TODO[Dkay]: why to hide GraphNode interface inside, move it outside the class to improve code radability.
+  // TODO[Dkay]: why to hide GraphNode interface inside, move it outside the
+  // class to improve code radability.
   struct GraphNode {
     llvm::Value *value = nullptr;
     std::string id;
@@ -45,12 +45,11 @@ private:
     std::string type;
     std::string runtimeValue;
 
-    bool isInstruction =
-        false; // FIXME[flops]: Use enum for this or determine value type via
-               // llvm isa (or dyn_cast: it uses isa and casts value to needed
-               // class if possible)
-               // [Dkay]: +++
-    
+    bool isInstruction = false; // FIXME[flops]: Use enum for this or determine
+                                // value type via llvm isa (or dyn_cast: it uses
+                                // isa and casts value to needed class if
+                                // possible) [Dkay]: +++
+
     bool isBasicBlock = false;
     bool isConstant = false;
     bool isArgument = false;
