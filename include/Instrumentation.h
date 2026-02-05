@@ -1,60 +1,39 @@
 #ifndef INSTRUMENTATION_H
 #define INSTRUMENTATION_H
 
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include <string>
 #include <unordered_set>
 
-// FIXME[Dkay]: He was afraid of `include`. But why.
-namespace llvm {
-class Module;
-class Function;
-class Value;
-class Instruction;
-class Constant;
-class Type;
-} // namespace llvm
-
-class Instrumentation {
+class Instrumentation final {
 public:
-  Instrumentation();
-
-  // FIXME[Dkay]: Class should be either marked final or have an virtual dtor
-  // FIXME[Dkay]: break of the rule of zero: class has untrivial dtor
-  // FIXME[Dkay]: break of the rule of five: class has untrivial dtor and has
-  // not copy-, move- operators and copy-, move- ctors
-  ~Instrumentation();
-
-  // TODO[Dkay]: why `Module` is not a field?
-  // This class almost doesn't store any state and that's weird.
-  // Pass some args to ctor, save them as fields and make your methods interface
-  // thiner
-  bool instrumentModule(const std::string &inputFile,
-                        const std::string &outputFile);
+  void instrumentModule(llvm::Module &module);
+  void setVerbose(bool verbose) { verbose_ = verbose; }
 
 private:
-  void instrumentFunction(llvm::Function &function, llvm::Module &module);
-  void instrumentValue(llvm::Value *value, llvm::Module &module,
-                       const std::string &funcName);
+  void instrumentFunction(llvm::Function &function);
+  void instrumentValue(llvm::Value *value, const std::string &funcName);
 
-  llvm::Constant *createGlobalString(llvm::Module &module,
-                                     const std::string &str,
+  std::string getValueNameForLog(llvm::Value *value);
+
+  llvm::Constant *createGlobalString(const std::string &str,
                                      const std::string &globalName);
 
   std::string getValueId(llvm::Value *value, const std::string &funcName);
 
-  void insertPrintCall(llvm::Module &module, llvm::Function &printFunc,
-                       llvm::Value *value, llvm::Constant *idStr,
-                       llvm::Constant *nameStr);
+  void insertPrintCall(llvm::Function &printFunc, llvm::Value *value,
+                       llvm::Constant *idStr, llvm::Constant *nameStr);
 
-  llvm::Function *getOrDeclarePrintI32WithId(llvm::Module &module);
-  llvm::Function *getOrDeclarePrintI64WithId(llvm::Module &module);
-  llvm::Function *getOrDeclarePrintFloatWithId(llvm::Module &module);
-
-  llvm::Function *getOrDeclarePrintFunction(llvm::Module &module,
-                                            const std::string &name,
+  llvm::Function *getOrDeclarePrintFunction(const std::string &name,
                                             llvm::Type *valueType);
 
   std::unordered_set<std::string> instrumentedValues_;
+  llvm::Module *curModule_ = nullptr;
+  bool verbose_ = false;
 };
 
 #endif // INSTRUMENTATON_H

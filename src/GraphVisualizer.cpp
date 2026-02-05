@@ -4,24 +4,29 @@
 #include <sstream>
 
 #include "GraphVisualizer.h"
-#include "llvm/IR/BasicBlock.h"
-#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
 GraphVisualizer::GraphVisualizer() : runtimeValuesLoaded_(false) {}
 
-// FIXME[Dkay] IN THE NAME OF GOD WHY THE FUCK
-GraphVisualizer::~GraphVisualizer() {}
+void GraphVisualizer::clearError() {
+  lastError_ = MyError::none;
+  lastErrorMsg_.clear();
+}
+
+void GraphVisualizer::setError(MyError code, const std::string &msg) {
+  lastError_ = code;
+  lastErrorMsg_ = msg;
+}
+
+MyError GraphVisualizer::lastError() const { return lastError_; }
+
+const std::string &GraphVisualizer::lastErrorMessage() const {
+  return lastErrorMsg_;
+}
 
 // FIXME[Dkay] Bro. I'm tilted as fuck. I have NOT taught you like that. Why
 // the fuck do you have a 300+ LOC function?
@@ -30,9 +35,7 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
   // FIXME[Dkay]: if you need to reset those fields, then why do you store them
   // as fields and not locals?
   nodes_.clear(); // TODO[flops]: Make reset method and use it there
-  basicBlocks_.clear();
   runtimeValues_.clear();
-  functionCalls_.clear();
   functionToEntryNode_.clear();
   runtimeValuesLoaded_ = false;
 
@@ -68,11 +71,7 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
       node.id = nodeId;
       node.label = getValueLabel(&arg);
       node.type = "argument";
-      node.isArgument = true;
-      node.isInstruction = false;
-      node.isConstant = false;
-      node.isBasicBlock = false;
-      node.isTerminator = false;
+      node.nodeType = NodeType::Argument;
       node.value = &arg;
       node.functionName = funcName;
 
@@ -103,12 +102,7 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
 
     for (auto &block : function) {
       std::string blockId = getNodeId(&block);
-
-      BasicBlockInfo bbInfo;
-      bbInfo.id = blockId;
-      bbInfo.label = getBasicBlockLabel(block);
-      bbInfo.blockPtr = &block;
-      bbInfo.functionName = funcName;
+      basicBlockCount_++;
 
       for (auto &instr : block) {
         std::string instrId = getNodeId(&instr);
@@ -116,13 +110,10 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
         node.id = instrId;
         node.label = getInstructionLabel(instr);
         node.type = getInstructionType(&instr);
-        node.isInstruction = true;
-        node.isArgument = false;
-        node.isConstant = false;
-        node.isBasicBlock = false;
+        node.nodeType = NodeType::Instruction;
         node.isTerminator = instr.isTerminator();
         node.value = &instr;
-        node.parentBlock = &block;
+        node.ownerBlock = &block;
         node.functionName = funcName;
 
         if (runtimeValuesLoaded_) {
@@ -172,11 +163,7 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
               constNode.id = operandId;
               constNode.label = getValueLabel(operand);
               constNode.type = "constant";
-              constNode.isConstant = true;
-              constNode.isInstruction = false;
-              constNode.isArgument = false;
-              constNode.isBasicBlock = false;
-              constNode.isTerminator = false;
+              constNode.nodeType = NodeType::Constant;
               constNode.value = operand;
               constNode.functionName = funcName;
 
@@ -209,10 +196,7 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
         }
 
         nodes_[instrId] = node;
-        bbInfo.instructions.push_back(instrId);
       }
-
-      basicBlocks_[blockId] = bbInfo;
     }
   }
 
@@ -226,30 +210,28 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
     if (function.isDeclaration())
       continue;
 
-    std::string funcName = function.getName().str();
-
     // find entry id for call edges (not PHI nodes)
     BasicBlock &entryBlock = function.getEntryBlock();
     for (auto &instr : entryBlock) {
       if (!isa<PHINode>(&instr)) {
-        functionToEntryNode_[funcName] = getNodeId(&instr);
+        functionToEntryNode_[&function] = getNodeId(&instr);
         break;
       }
     }
 
     for (auto &block : function) {
-      std::string blockId = getNodeId(&block);
-      auto bbIt = basicBlocks_.find(blockId);
+      std::string prevId;
+      bool havePrev = false;
 
-      if (bbIt != basicBlocks_.end()) {
-        auto &insts = bbIt->second.instructions;
-        for (size_t i = 0; i + 1 < insts.size(); i++) {
-          const std::string &a = insts[i];
-          const std::string &b = insts[i + 1];
-          if (cfgSeen.insert({a, b}).second) {
-            nodes_[a].cfgSuccessors.push_back(b);
+      for (auto &instr : block) {
+        std::string curId = getNodeId(&instr);
+        if (havePrev) {
+          if (cfgSeen.insert({prevId, curId}).second) {
+            nodes_[prevId].cfgSuccessors.push_back(curId);
           }
         }
+        prevId = curId;
+        havePrev = true;
       }
 
       if (auto *terminator = block.getTerminator()) {
@@ -257,18 +239,18 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
 
         for (unsigned i = 0; i < terminator->getNumSuccessors(); i++) {
           BasicBlock *succ = terminator->getSuccessor(i);
-          std::string succId = getNodeId(succ);
+          Instruction *firstInstr = succ->getFirstNonPHI();
 
-          auto succIt = basicBlocks_.find(succId);
-          if (succIt != basicBlocks_.end() &&
-              !succIt->second.instructions.empty()) {
-            const std::string &first = succIt->second.instructions.front();
-            if (cfgSeen.insert({termId, first}).second) {
-              nodes_[termId].cfgSuccessors.push_back(first);
-            }
+          if (!firstInstr)
+            continue;
+
+          std::string firstId = getNodeId(firstInstr);
+          if (cfgSeen.insert({termId, firstId}).second) {
+            nodes_[termId].cfgSuccessors.push_back(firstId);
           }
         }
       }
+
       // def-use + call edges
       for (auto &instr : block) {
         std::string instrId = getNodeId(&instr);
@@ -281,12 +263,11 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
         if (auto *callInst = dyn_cast<CallInst>(&instr)) {
           if (Function *calledFunc = callInst->getCalledFunction()) {
             if (!calledFunc->isDeclaration()) {
-              FunctionCallInfo callInfo;
-              callInfo.caller = funcName;
-              callInfo.callee = calledFunc->getName().str();
-              callInfo.callSiteId = instrId;
-              callInfo.callOrder = callOrderCounter++;
-              functionCalls_.push_back(callInfo);
+              CallEdge e;
+              e.callee = calledFunc;
+              e.callSiteId = instrId;
+              e.callOrder = ++callOrderCounter;
+              callEdges_.push_back(e);
             }
           }
         }
@@ -295,19 +276,20 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
   }
 
   std::cout << "  Nodes: " << nodes_.size() << "\n";
-  std::cout << "  Calls: " << functionCalls_.size() << "\n";
+  std::cout << "  Calls: " << callEdges_.size() << "\n";
   return true;
 }
 
 bool GraphVisualizer::loadRuntimeValues(const std::string &logFile) {
   std::ifstream log(logFile);
   if (!log.is_open()) {
-    std::cerr << "    can't open runtime log: " << logFile << "\n";
+    setError(MyError::cannot_open_file, "can't open runtime log: " + logFile);
     return false;
   }
 
   std::string line;
   int cnt = 0;
+  int badLines = 0;
 
   // TODO [Dkay]: You can use Json and save yourself from weird parsing. LLVM
   // also has json lib.
@@ -327,23 +309,31 @@ bool GraphVisualizer::loadRuntimeValues(const std::string &logFile) {
     key.erase(key.find_last_not_of(" \t\r\n") + 1);
     value.erase(0, value.find_first_not_of(" \t\r\n"));
     value.erase(value.find_last_not_of(" \t\r\n") + 1);
-
-    if (!key.empty() && !value.empty()) {
-      runtimeValues_[key] = value;
-      cnt++;
+    if (key.empty() || value.empty()) {
+      badLines++;
+      continue;
     }
+    runtimeValues_[key] = value;
+    cnt++;
   }
   log.close();
   if (cnt > 0) {
     return true;
   }
+  if (badLines > 0) {
+    setError(MyError::runtime_log_parse,
+             "runtime log has no valid key:value lines: " + logFile);
+  } else {
+    setError(MyError::runtime_log_parse, "runtime log is empty: " + logFile);
+  }
   return false;
 }
 
-std::string GraphVisualizer::getNodeId(Value *value) const {
-  if (!value)
-    return "null"; // FIXME[Dkay]: use enum or other language error-ahndling
-                   // system, not magic string constant
+std::string GraphVisualizer::getNodeId(Value *value) {
+  if (!value) {
+    setError(MyError::bad_input, "value is null");
+    return "";
+  }
 
   std::stringstream ss;
 
@@ -364,15 +354,16 @@ std::string GraphVisualizer::getNodeId(Value *value) const {
     ss << "const_" << ci->getSExtValue();
     return ss.str();
   } else {
-    ss << "val_" << std::hex
-       << (uintptr_t)value; // TODO[flops]: Use static_cast
+    ss << "val_" << std::hex << reinterpret_cast<uintptr_t>(value);
     return ss.str();
   }
 }
 
-std::string GraphVisualizer::getValueLabel(Value *value) const {
-  if (!value)
-    return "null";
+std::string GraphVisualizer::getValueLabel(Value *value) {
+  if (!value) {
+    setError(MyError::bad_input, "value is null");
+    return "";
+  }
 
   std::string str;
   raw_string_ostream rso(str);
@@ -406,66 +397,80 @@ std::string GraphVisualizer::getValueLabel(Value *value) const {
   return rso.str();
 }
 
-// TODO[Dkay]: Use some DSL on defines or templates here
-// see class Value::~Value() method in llvm for an example.
 std::string GraphVisualizer::getInstructionType(Instruction *instr) const {
-  if (!instr)
+  if (!instr) {
     return "unknown";
-  if (isa<BinaryOperator>(instr)) {
-    switch (instr->getOpcode()) {
-    case Instruction::Add:
-      return "add";
-    case Instruction::Sub:
-      return "sub";
-    case Instruction::Mul:
-      return "mul";
-    case Instruction::UDiv:
-    case Instruction::SDiv:
-      return "div";
-    case Instruction::URem:
-    case Instruction::SRem:
-      return "rem";
-    case Instruction::Shl:
-      return "shl";
-    case Instruction::LShr:
-      return "lshr";
-    case Instruction::AShr:
-      return "ashr";
-    case Instruction::And:
-      return "and";
-    case Instruction::Or:
-      return "or";
-    case Instruction::Xor:
-      return "xor";
-    default:
-      return "binop";
-    }
-  } else if (isa<ICmpInst>(instr))
-    return "icmp";
-  else if (isa<FCmpInst>(instr))
-    return "fcmp";
-  else if (isa<AllocaInst>(instr))
+  }
+
+  switch (instr->getOpcode()) {
+  case Instruction::Add:
+    return "add";
+  case Instruction::Sub:
+    return "sub";
+  case Instruction::Mul:
+    return "mul";
+
+  case Instruction::UDiv:
+  case Instruction::SDiv:
+    return "div";
+
+  case Instruction::URem:
+  case Instruction::SRem:
+    return "rem";
+
+  case Instruction::Shl:
+    return "shl";
+  case Instruction::LShr:
+    return "lshr";
+  case Instruction::AShr:
+    return "ashr";
+
+  case Instruction::And:
+    return "and";
+  case Instruction::Or:
+    return "or";
+  case Instruction::Xor:
+    return "xor";
+
+  case Instruction::Alloca:
     return "alloca";
-  else if (isa<LoadInst>(instr))
+  case Instruction::Load:
     return "load";
-  else if (isa<StoreInst>(instr))
+  case Instruction::Store:
     return "store";
-  else if (isa<BranchInst>(instr))
+
+  case Instruction::Br:
     return "br";
-  else if (isa<ReturnInst>(instr))
+  case Instruction::Ret:
     return "ret";
-  else if (isa<CallInst>(instr))
+
+  case Instruction::Call:
     return "call";
-  else if (isa<PHINode>(instr))
-    return "phi";
-  else if (isa<SelectInst>(instr))
+
+  case Instruction::Select:
     return "select";
-  else if (isa<GetElementPtrInst>(instr))
+
+  case Instruction::GetElementPtr:
     return "gep";
-  else if (isa<CastInst>(instr))
+
+  default:
+    break;
+  }
+
+  if (isa<ICmpInst>(instr)) {
+    return "icmp";
+  }
+  if (isa<FCmpInst>(instr)) {
+    return "fcmp";
+  }
+  if (isa<PHINode>(instr)) {
+    return "phi";
+  }
+  if (isa<CastInst>(instr)) {
     return "cast";
-  else
-    return instr->getOpcodeName();
+  }
+
+  return instr->getOpcodeName();
 }
 
 std::string GraphVisualizer::getInstructionLabel(Instruction &instr) const {
@@ -497,14 +502,10 @@ std::string GraphVisualizer::getBasicBlockLabel(BasicBlock &block) const {
   return rso.str();
 }
 
-bool GraphVisualizer::exportToDot(const std::string &filename) const {
+bool GraphVisualizer::exportToDot(const std::string &filename) {
   std::ofstream out(filename);
   if (!out.is_open()) {
-    std::cerr << "Error: Cannot open file: " << filename
-              << "\n"; // FIXME[Dkay]: I don't like your error-handling system.
-                       // Somewhere it returns false in case of error. Somewhere
-                       // it returns "null" string. Make it in one same way for
-                       // every function
+    setError(MyError::cannot_open_file, "cannot open dot output: " + filename);
     return false;
   }
 
@@ -529,11 +530,11 @@ bool GraphVisualizer::exportToDot(const std::string &filename) const {
     if (node.functionName.empty()) {
       continue;
     }
-    if (node.isArgument) {
+    if (node.nodeType == NodeType::Argument) {
       funcToArguments[node.functionName].push_back(pair.first);
-    } else if (node.isConstant) {
+    } else if (node.nodeType == NodeType::Constant) {
       funcToConstants[node.functionName].push_back(pair.first);
-    } else if (node.isInstruction) {
+    } else if (node.nodeType == NodeType::Instruction) {
       funcToNodes[node.functionName].push_back(pair.first);
     }
   }
@@ -574,8 +575,8 @@ bool GraphVisualizer::exportToDot(const std::string &filename) const {
     std::map<std::string, std::vector<const GraphNode *>> instrsByBlock;
     for (const auto &nodeId : funcPair.second) {
       const GraphNode &node = nodes_.at(nodeId);
-      if (node.parentBlock) {
-        std::string blockName = getBasicBlockLabel(*node.parentBlock);
+      if (node.ownerBlock) {
+        std::string blockName = getBasicBlockLabel(*node.ownerBlock);
         instrsByBlock[blockName].push_back(&node);
       } else {
         instrsByBlock["unknown"].push_back(&node);
@@ -590,7 +591,7 @@ bool GraphVisualizer::exportToDot(const std::string &filename) const {
         std::string color = "black";
         std::string style = "filled";
 
-        if (n->isTerminator) {
+        if (n->nodeType == NodeType::Instruction && n->isTerminator) {
           shape = "box";
           fill = "#ffe0e0";
           color = "#cc0000";
@@ -647,12 +648,12 @@ bool GraphVisualizer::exportToDot(const std::string &filename) const {
     }
   }
 
-  if (!functionCalls_.empty()) {
+  if (!callEdges_.empty()) {
     out << "\n  // ========== FUNCTION CALL EDGES ==========\n";
     out << "  edge [color=\"#cc3366\", penwidth=2.0, style=\"bold\", "
            "arrowhead=\"vee\"];\n";
 
-    for (const auto &call : functionCalls_) {
+    for (const auto &call : callEdges_) {
       auto it = functionToEntryNode_.find(call.callee);
       if (it != functionToEntryNode_.end()) {
         out << "  \"" << call.callSiteId << "\" -> \"" << it->second
@@ -667,7 +668,7 @@ bool GraphVisualizer::exportToDot(const std::string &filename) const {
 
   for (const auto &pair : nodes_) {
     const GraphNode &node = pair.second;
-    if (!node.isInstruction)
+    if (node.nodeType != NodeType::Instruction)
       continue;
 
     for (const auto &operandId : node.operands) {
@@ -675,7 +676,8 @@ bool GraphVisualizer::exportToDot(const std::string &filename) const {
       if (it == nodes_.end())
         continue;
 
-      if (it->second.isConstant || it->second.isArgument) {
+      if (it->second.nodeType == NodeType::Constant ||
+          it->second.nodeType == NodeType::Argument) {
         // avoid duplicating edges
         if (allEdges.find({operandId, node.id}) == allEdges.end()) {
           out << "  \"" << operandId << "\" -> \"" << node.id << "\";\n";
@@ -780,10 +782,11 @@ std::string GraphVisualizer::getInstructionName(Instruction &instr) const {
   return rso.str();
 }
 
-std::string
-GraphVisualizer::getShortInstructionLabel(const GraphNode &node) const {
-  if (!node.value)
-    return "null"; // FIXME[Dkay]: Use std:optional / std::expected / enum
+std::string GraphVisualizer::getShortInstructionLabel(const GraphNode &node) {
+  if (!node.value) {
+    setError(MyError::bad_input, "node.value is null");
+    return "";
+  }
 
   Instruction *instr = dyn_cast<Instruction>(node.value);
   if (!instr)
@@ -806,37 +809,36 @@ GraphVisualizer::getShortInstructionLabel(const GraphNode &node) const {
   return rso.str();
 }
 
-// FIXME[Dkay]: Why printStatistics function does somesing besindes printing
-// statistcs?
-void GraphVisualizer::printStatistics() const {
-  int instrCount = 0;
-  int constCount = 0;
-  int argCount = 0;
-  int bbCount = basicBlocks_.size();
-  int cfgEdges = 0;
-  int duEdges = 0;
-  int runtimeCount = runtimeValues_.size();
-
+void GraphVisualizer::calcStatistics() {
+  instrCount_ = 0;
+  constCount_ = 0;
+  argCount_ = 0;
+  bbCount_ = basicBlockCount_;
+  cfgEdges_ = 0;
+  duEdges_ = 0;
+  runtimeCount_ = runtimeValues_.size();
   for (const auto &pair : nodes_) {
-    if (pair.second.isInstruction)
-      instrCount++;
-    if (pair.second.isConstant)
-      constCount++;
-    if (pair.second.isArgument)
-      argCount++;
+    if (pair.second.nodeType == NodeType::Instruction)
+      instrCount_++;
+    if (pair.second.nodeType == NodeType::Constant)
+      constCount_++;
+    if (pair.second.nodeType == NodeType::Argument)
+      argCount_++;
 
-    cfgEdges += pair.second.cfgSuccessors.size();
-    duEdges += pair.second.defUseSuccessors.size();
+    cfgEdges_ += pair.second.cfgSuccessors.size();
+    duEdges_ += pair.second.defUseSuccessors.size();
   }
+}
 
-  // FIXME[Dkay]: Why to call std::cout 9 times, instead of one?
-  std::cout << "\n=== GRAPH STATISTICS ===\n";
-  std::cout << "Basic Blocks:      " << bbCount << "\n";
-  std::cout << "Instructions:      " << instrCount << "\n";
-  std::cout << "Arguments:         " << argCount << "\n";
-  std::cout << "Constants:         " << constCount << "\n";
-  std::cout << "CFG Edges:         " << cfgEdges << "\n";
-  std::cout << "Def-Use Edges:     " << duEdges << "\n";
-  std::cout << "Runtime Values:    " << runtimeCount << "\n";
-  std::cout << "========================\n";
+void GraphVisualizer::printStatistics() {
+  calcStatistics();
+  std::cout << "\n=== GRAPH STATISTICS ===\n"
+            << "Basic Blocks:      " << bbCount_ << "\n"
+            << "Instructions:      " << instrCount_ << "\n"
+            << "Arguments:         " << argCount_ << "\n"
+            << "Constants:         " << constCount_ << "\n"
+            << "CFG Edges:         " << cfgEdges_ << "\n"
+            << "Def-Use Edges:     " << duEdges_ << "\n"
+            << "Runtime Values:    " << runtimeCount_ << "\n"
+            << "========================\n";
 }

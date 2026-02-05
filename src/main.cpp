@@ -9,17 +9,15 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <sys/types.h>
+#include <system_error>
 
-// [flops]: Just note that c++20 provides ends_with method:
-// http://en.cppreference.com/w/cpp/string/basic_string/ends_with
-
-// [Dkay]: Disagree with flops. Build system uses --std=c++17, so it is ok to
-// implement such method
 //         HOWEVER, Why is it located in main.cpp file?
 //         main() всегда должен идти первым, иначе придется его искать, я же
 //         спрашивал это на сдачах
@@ -102,11 +100,24 @@ static bool mem2reg(const std::string &inLl, const std::string &outLl) {
   return runCmd(cmd);
 }
 
-// FIXME[Dkay]: different functions naming style
-// why the fuck this exists??
-static bool instrumentll(const std::string &inLl, const std::string &outLl) {
+static bool instrumentLl(const std::string &inLl, const std::string &outLl) {
   Instrumentation inst;
-  return inst.instrumentModule(inLl, outLl);
+  llvm::LLVMContext context;
+  llvm::SMDiagnostic error;
+  std::unique_ptr<llvm::Module> module = parseIRFile(inLl, error, context);
+  if (!module) {
+    llvm::errs() << "Error: Failed to load module: " << inLl << "\n";
+    return false;
+  }
+  inst.instrumentModule(*module);
+  std::error_code ec;
+  if (ec) {
+    llvm::errs() << "Error: Cannot open output file: " << outLl << "\n";
+    return false;
+  }
+  llvm::raw_fd_ostream out(outLl, ec);
+  module->print(out, nullptr);
+  return true;
 }
 
 static bool buildAndRun(const std::string &instrumentedLl,
@@ -257,7 +268,7 @@ static int doAnalyze(const std::string &inputFile, const std::string &outDir) {
   }
 
   std::cout << "[3/5] instrument\n";
-  if (!instrumentll(irForGraph, instLl)) {
+  if (!instrumentLl(irForGraph, instLl)) {
     std::cerr << "error: instrumentation failed\n";
     return 3;
   }
@@ -338,7 +349,7 @@ int main(int argc, char **argv) {
         std::cerr << "error: -instrument <in.ll> <out.ll>\n";
         return 1;
       }
-      return instrumentll(argv[2], argv[3]) ? 0 : 2;
+      return instrumentLl(argv[2], argv[3]) ? 0 : 2;
     }
 
     if (cmd == "-run") {
