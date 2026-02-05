@@ -4,16 +4,14 @@ set -euo pipefail
 # FIXME[DKay]: Move ot makefile system
 # TODO[flops]: This script is meant to test tests/medium, so better move it to tests/medium
 
-# запускать из корня проекта: ./run_medium.sh
-
 mkdir -p llvm logs outputs/medium/static outputs/medium/runtime
-
-[ -x bin/defuse-analyzer ] || { echo "ERROR: bin/defuse-analyzer not found. Run ./build.sh"; exit 1; }
-command -v clang >/dev/null 2>&1 || { echo "ERROR: clang not found"; exit 1; }
-command -v opt   >/dev/null 2>&1 || { echo "ERROR: opt not found"; exit 1; }
 
 CC=${CC:-clang}
 OPT=${OPT:-opt}
+
+[ -x bin/defuse-analyzer ] || { echo "ERROR: bin/defuse-analyzer not found. Run ./build.sh"; exit 1; }
+command -v $CC >/dev/null 2>&1 || { echo "ERROR: clang not found"; exit 1; }
+command -v $OPT   >/dev/null 2>&1 || { echo "ERROR: opt not found"; exit 1; }
 
 SRC=tests/medium/main.c
 LL=llvm/medium.ll

@@ -291,8 +291,6 @@ bool GraphVisualizer::loadRuntimeValues(const std::string &logFile) {
   int cnt = 0;
   int badLines = 0;
 
-  // TODO [Dkay]: You can use Json and save yourself from weird parsing. LLVM
-  // also has json lib.
   while (std::getline(log, line)) {
     if (line.empty())
       continue;

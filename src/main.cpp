@@ -1,46 +1,141 @@
-// FIXME [Dkay]: Probably its unsafe to call std::system like you do, but I
-// won't prove it think about the case when user enters `sudo rm -rf /` as
-// program's input
-
 #include "GraphVisualizer.h"
 #include "Instrumentation.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <sys/types.h>
 #include <system_error>
 
-//         HOWEVER, Why is it located in main.cpp file?
-//         main() всегда должен идти первым, иначе придется его искать, я же
-//         спрашивал это на сдачах
-//
-// FIXME [Dkay]: Get rid of one-letter naming!!
-static bool endsWith(const std::string &s, const std::string &suffix) {
-  if (s.size() < suffix.size())
-    return false;
-  // extensions comparison
-  return s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+static bool endsWith(const std::string &str, const std::string &suffix);
+static void printHelp(const char *prog);
+static bool runCmd(const std::string &cmd);
+static void makeDir(const std::string &path);
+static std::string getOptMem2RegCmd();
+static bool emitllFromC(const std::string &cFile, const std::string &outLl);
+static bool mem2reg(const std::string &inLl, const std::string &outLl);
+static bool instrumentLl(const std::string &inLl, const std::string &outLl);
+static bool buildAndRun(const std::string &instrumentedLl,
+                        const std::string &outRuntimeLog,
+                        const std::string &outExe);
+static bool loadModule(const std::string &llFile,
+                       std::unique_ptr<llvm::Module> &outModule,
+                       llvm::LLVMContext &ctx);
+static bool buildGraph(const std::string &llFile, const std::string &runtimeLog,
+                       const std::string &outDot);
+static std::string baseNameNoExt(const std::string &path);
+static bool pickInputIr(const std::string &inputFile,
+                        const std::filesystem::path &rawLlPath,
+                        std::string &irForGraph);
+static int runFullGraphAnalysis(const std::string &inputFile,
+                                const std::string &outDir);
+static int handleGraphCmd(int argc, char **argv);
+
+enum Error {
+  None,
+  BadInput,
+  InstrumentationFailed,
+  RunFailed,
+  GraphBuildFailed,
+};
+
+int main(int argc, char **argv) {
+  if (argc < 2) {
+    printHelp(argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  std::string cmd = argv[1];
+
+  if (cmd == "--help" || cmd == "-h" || cmd == "help") {
+    printHelp(argv[0]);
+    return 0;
+  }
+
+  if (!cmd.empty() && cmd[0] == '-') {
+    if (cmd == "-analyze") {
+      if (argc < 3) {
+        std::cerr << "error: -analyze needs <input.c|input.ll>\n";
+        return EXIT_FAILURE;
+      }
+      std::string input = argv[2];
+      std::string outDir = (argc >= 4) ? argv[3] : "";
+      return runFullGraphAnalysis(input, outDir);
+    }
+
+    if (cmd == "-emit-llvm") {
+      if (argc < 4) {
+        std::cerr << "error: -emit-llvm <file.c> <out.ll>\n";
+        return EXIT_FAILURE;
+      }
+      return emitllFromC(argv[2], argv[3]) ? 0 : 2;
+    }
+
+    if (cmd == "-mem2reg") {
+      if (argc < 4) {
+        std::cerr << "error: -mem2reg <in.ll> <out.ll>\n";
+        return EXIT_FAILURE;
+      }
+      return mem2reg(argv[2], argv[3]) ? 0 : 2;
+    }
+
+    if (cmd == "-instrument") {
+      if (argc < 4) {
+        std::cerr << "error: -instrument <in.ll> <out.ll>\n";
+        return EXIT_FAILURE;
+      }
+      return instrumentLl(argv[2], argv[3]) ? 0 : 2;
+    }
+
+    if (cmd == "-run") {
+      if (argc < 4) {
+        std::cerr << "error: -run <instrumented.ll> <runtime.log> [out_exe]\n";
+        return EXIT_FAILURE;
+      }
+      std::string exe = (argc >= 5) ? argv[4] : "";
+      return buildAndRun(argv[2], argv[3], exe) ? 0 : 2;
+    }
+
+    if (cmd == "-graph") {
+      return handleGraphCmd(argc, argv);
+    }
+
+    std::cerr << "error: unknown option: " << cmd << "\n";
+    printHelp(argv[0]);
+    return EXIT_FAILURE;
+  }
+
+  std::cerr << "error: unknown command: " << cmd << "\n";
+  printHelp(argv[0]);
+  return EXIT_FAILURE;
 }
 
-static void printHelp() { // TODO[flops]: Use argv[0] there instead of
-                          // ./bin/defuse-analyzer Dkay: +
+static bool endsWith(const std::string &str, const std::string &suffix) {
+  return llvm::StringRef(str).ends_with(suffix);
+}
+
+static void printHelp(const char *prog) {
+  const char *p = (prog && prog[0]) ? prog : "defuse-analyzer";
+
   std::cout << "LLVM Def-Use Graph Builder\n\n"
             << "Usage:\n"
-            << "  ./bin/defuse-analyzer --help\n"
-            << "  ./bin/defuse-analyzer -analyze <input.c|input.ll> [out_dir]\n"
+            << "  " << p << " --help\n"
+            << "  " << p << " -analyze <input.c|input.ll> [out_dir]\n"
             << "\n"
             << "One-step full pipeline:\n"
             << "  -analyze <file.c|file.ll> [out_dir]\n"
-            << "    C->LL -> mem2reg -> instrument -> run "
-               "-> graph\n"
+            << "    C->LL -> mem2reg -> instrument -> run -> graph\n"
             << "\n"
             << "Separate steps:\n"
             << "  -emit-llvm   <file.c>  <out.ll>\n"
@@ -56,26 +151,22 @@ static bool runCmd(const std::string &cmd) {
   return rc == 0;
 }
 
-static void
-ensureDir(const std::string &path) { // TODO[flops]: Rename it into makeDir,
-                                     // getOrCreateDir or something else
-  std::string cmd =
-      "mkdir -p \"" + path + "\""; // FIXME[dkay]: Why not to use runCmd there
-  (void)std::system(cmd.c_str());
+static void makeDir(const std::string &path) {
+  std::error_code ec = llvm::sys::fs::create_directories(path);
+  if (ec) {
+    std::cerr << "error: cannot create directory: " << path << "\n";
+  }
 }
 
 static std::string getOptMem2RegCmd() {
-  // FIXME[dkay]: Why not to use runCmd there
-  if (std::system("which opt > /dev/null 2>&1") != 0) // [flops]: Check build.sh
-    return "";
-
-  // [flops]: You can pre-check format of opt commands on build stage too
-  // TODO[Dkay]: You can use llvm-config version to pre-check
-  if (std::system("opt -S -passes=mem2reg --help > /dev/null 2>&1") == 0)
-    return "opt -S -passes=mem2reg";
-
-  // if new format not supported, fallback to old one
-  return "opt -S -mem2reg";
+#ifdef DEFUSE_OPT_PATH
+  const std::string optPath = DEFUSE_OPT_PATH;
+#else
+  const std::string optPath = "opt";
+#endif
+  if (runCmd("\"" + optPath + "\" -S -passes=mem2reg --help > /dev/null 2>&1"))
+    return "\"" + optPath + "\" -S -passes=mem2reg";
+  return "\"" + optPath + "\" -S -mem2reg";
 }
 
 static bool emitllFromC(const std::string &cFile, const std::string &outLl) {
@@ -86,17 +177,13 @@ static bool emitllFromC(const std::string &cFile, const std::string &outLl) {
   return runCmd(cmd);
 }
 
-// FIXME[Dkay]: Why all of these function are in main.cpp???
 static bool mem2reg(const std::string &inLl, const std::string &outLl) {
-  std::string optCmd =
-      getOptMem2RegCmd(); // FIXME[Dkay] use std::optional for such cases
+  std::string optCmd = getOptMem2RegCmd();
+  const std::filesystem::path inPath(inLl);
+  const std::filesystem::path outPath(outLl);
 
-  if (optCmd.empty()) {
-    std::cerr << "error: opt not found (install llvm)\n";
-    return false;
-  }
-  std::string cmd = optCmd + " \"" + inLl + "\" -o \"" + outLl +
-                    "\""; // FIXME[Dkay]: use std::filesystem::path
+  const std::string cmd =
+      optCmd + " \"" + inPath.string() + "\" -o \"" + outPath.string() + "\"";
   return runCmd(cmd);
 }
 
@@ -111,11 +198,11 @@ static bool instrumentLl(const std::string &inLl, const std::string &outLl) {
   }
   inst.instrumentModule(*module);
   std::error_code ec;
+  llvm::raw_fd_ostream out(outLl, ec);
   if (ec) {
     llvm::errs() << "Error: Cannot open output file: " << outLl << "\n";
     return false;
   }
-  llvm::raw_fd_ostream out(outLl, ec);
   module->print(out, nullptr);
   return true;
 }
@@ -123,27 +210,33 @@ static bool instrumentLl(const std::string &inLl, const std::string &outLl) {
 static bool buildAndRun(const std::string &instrumentedLl,
                         const std::string &outRuntimeLog,
                         const std::string &outExe) {
-  // FIXME[Dkay]: buildAndRun function should rely on some constrains of
-  // arguments, it shoud expect outExe not to be empty and check that is assert
-  // the default value if outExe param should be set in argument parser function
-  std::string exePath =
-      outExe.empty()
-          ? "program"
-          : outExe; // FIXME[flops]: Unsafe fallback to the `program`, give loud
-                    // error and return false there
+  if (outExe.empty()) {
+    std::cerr << "error: output exe path is empty\n";
+    return false;
+  }
 
-  // FIXME[flops]: fail on launch from different directories, because of
-  // hardcoded `runtime/core_runtime.c`
-  std::string buildCmd = "clang -O0 runtime/core_runtime.c \"" +
-                         instrumentedLl + "\" -o \"" + exePath + "\"";
+  const std::filesystem::path exePath(outExe);
+  std::filesystem::path runtimeC =
+      std::filesystem::path("runtime") / "core_runtime.c";
+  if (!std::filesystem::exists(runtimeC)) {
+    runtimeC = exePath.parent_path() / "runtime" / "core_runtime.c";
+  }
+
+  if (!std::filesystem::exists(runtimeC)) {
+    std::cerr << "error: can't find runtime/core_runtime.c\n";
+    return false;
+  }
+  const std::string buildCmd = "clang -O0 \"" + runtimeC.string() + "\" \"" +
+                               instrumentedLl + "\" -o \"" + exePath.string() +
+                               "\"";
   if (!runCmd(buildCmd)) {
     std::cerr << "error: failed to compile instrumented program\n";
     return false;
   }
 
-  std::string runCmdLine =
-      "./" + outExe + " > " + outRuntimeLog + " 2>/dev/null";
-  // DO NOT RETURN A NON-ZERO VALUE FROM MAIN, YOU WILL BE RAPED BY TOUCAN
+  const std::string runCmdLine =
+      "\"" + exePath.string() + "\" > \"" + outRuntimeLog + "\" 2>/dev/null";
+  // DO NOT RETURN A NON-ZERO VALUE FROM MAIN
   if (!runCmd(runCmdLine)) {
     std::cerr << "error: running instrumented program failed\n";
     return false;
@@ -179,210 +272,114 @@ static bool buildGraph(const std::string &llFile, const std::string &runtimeLog,
     return false;
   }
 
-  vis.printStatistics(); // TODO[Dkay]: why to print stats even in production
-                         // mode?
+  // vis.printStatistics(); // TODO Make debugging mode
 
   if (!vis.exportToDot(outDot)) {
     std::cerr << "error: exportToDot failed\n";
     return false;
   }
 
-  if (std::system("which dot > /dev/null 2>&1") ==
-      0) { // FIXME [Dkay]: Why to use std::system if you have run cmd?
-    std::string png = outDot;
-    std::string svg = outDot;
-
-    if (endsWith(png, ".dot")) {
-      png = png.substr(0, png.size() - 4) +
-            ".png"; // FIXME[flops]: Magic constants
-      svg = svg.substr(0, svg.size() - 4) + ".svg";
-    } else {
-      png += ".png";
-      svg += ".svg";
+  if (runCmd("which dot > /dev/null 2>&1")) {
+    std::string base = outDot;
+    if (endsWith(base, ".dot")) {
+      base = base.substr(0, base.size() - 4);
     }
-    // FIXME[flops]: Two copies is not the best approach here, jus append
-    // extension to outDot
-    runCmd("dot -Tpng \"" + outDot + "\" -o \"" + png + "\" 2>/dev/null");
-    runCmd("dot -Tsvg \"" + outDot + "\" -o \"" + svg + "\" 2>/dev/null");
-  }
 
-  // FIXME[Dkay] Is dot does not exists on PC, you still return true?
-  // why build graph function does something besides building graph like
-  // checking if dot binary exists...
+    runCmd("dot -Tpng \"" + outDot + "\" -o \"" + base + ".png\" 2>/dev/null");
+    runCmd("dot -Tsvg \"" + outDot + "\" -o \"" + base + ".svg\" 2>/dev/null");
+  } else {
+    std::cerr << "warn: 'dot' not found, skipping png/svg export\n";
+  }
   return true;
 }
 
-static std::string baseNameNoExt(
-    const std::string &path) { // FIXME [Dkay]: this is std::filesystem function
-  std::string s = path;
-  size_t slash = s.find_last_of("/\\");
-  if (slash != std::string::npos)
-    s = s.substr(slash + 1);
-  size_t dot = s.find_last_of('.');
-  if (dot != std::string::npos)
-    s = s.substr(0, dot);
-  return s;
+static std::string baseNameNoExt(const std::string &path) {
+  llvm::StringRef p(path);
+  return llvm::sys::path::stem(p).str();
 }
 
-// FIXME [Dkay]: bad naming: what is analyzing, which analyses?
-//
-static int doAnalyze(const std::string &inputFile, const std::string &outDir) {
+static bool pickInputIr(const std::string &inputFile,
+                        const std::filesystem::path &rawLlPath,
+                        std::string &irForGraph) {
+  if (endsWith(inputFile, ".c")) {
+    std::cout << "[1/5] clang -> LLVM IR\n";
+    if (!emitllFromC(inputFile, rawLlPath.string())) {
+      std::cerr << "error: clang failed\n";
+      return false;
+    }
+    irForGraph = rawLlPath.string();
+    return true;
+  }
+
+  if (endsWith(inputFile, ".ll")) {
+    irForGraph = inputFile;
+    return true;
+  }
+
+  std::cerr << "error: input must be .c or .ll\n";
+  return false;
+}
+
+static int runFullGraphAnalysis(const std::string &inputFile,
+                                const std::string &outDir) {
   std::string name = baseNameNoExt(inputFile);
-  std::string root = outDir.empty() ? ("outputs/" + name) : outDir;
+  const std::filesystem::path root =
+      outDir.empty() ? (std::filesystem::path("outputs") / name)
+                     : std::filesystem::path(outDir);
+  const std::filesystem::path llvmDir = root / "llvm";
+  makeDir(root);
+  makeDir(llvmDir);
 
-  std::string llvmDir =
-      root + "/llvm"; // TODO[Dkay]: use std::filesystem, use const
-  ensureDir(root);
-  ensureDir(llvmDir);
-
-  // TODO [Dkay]: worsdt naming ever.
-  std::string ll0 = llvmDir + "/" + name + ".ll";
-  std::string ll1 = llvmDir + "/" + name + "_m2r.ll";
-  std::string instLl = llvmDir + "/" + name + "_instrumented.ll";
-  std::string rtLog = root + "/runtime.log";
-  std::string dot = root + "/enhanced_graph.dot";
-  std::string exe = root + "/program";
+  const std::filesystem::path rawLlPath = llvmDir / (name + ".ll");
+  const std::filesystem::path mem2regLlPath = llvmDir / (name + "_m2r.ll");
+  const std::filesystem::path instrumentedLlPath =
+      llvmDir / (name + "_instrumented.ll");
+  const std::filesystem::path runtimeLogPath = root / "runtime.log";
+  const std::filesystem::path dotPath = root / "enhanced_graph.dot";
+  const std::filesystem::path exePath = root / "program";
 
   std::string irForGraph;
-
-  if (endsWith(inputFile,
-               ".c")) { // TODO[Dkay]: Why dispatching is in the same fucntion?
-    std::cout << "[1/5] clang -> LLVM IR\n";
-    if (!emitllFromC(inputFile, ll0)) {
-      std::cerr << "error: clang failed\n";
-      return 2; // FIXME [Dkay]: magic consts
-    }
-    irForGraph = ll0;
-  } else if (endsWith(inputFile, ".ll")) {
-    irForGraph = inputFile;
-  } else {
-    std::cerr << "error: input must be .c or .ll\n";
-    return 2;
+  if (!pickInputIr(inputFile, rawLlPath, irForGraph)) {
+    return Error::BadInput;
   }
 
   std::cout << "[2/5] mem2reg\n";
-  if (mem2reg(irForGraph, ll1)) {
-    irForGraph = ll1;
+  if (mem2reg(irForGraph, mem2regLlPath.string())) {
+    irForGraph = mem2regLlPath.string();
   } else {
     std::cerr << "warn: mem2reg failed, continue with original IR\n";
   }
 
   std::cout << "[3/5] instrument\n";
-  if (!instrumentLl(irForGraph, instLl)) {
+  if (!instrumentLl(irForGraph, instrumentedLlPath.string())) {
     std::cerr << "error: instrumentation failed\n";
-    return 3;
+    return Error::InstrumentationFailed;
   }
 
   std::cout << "[4/5] run instrumented program (collect runtime.log)\n";
-  if (!buildAndRun(instLl, rtLog, exe)) {
-    return 4;
+  if (!buildAndRun(instrumentedLlPath.string(), runtimeLogPath.string(),
+                   exePath.string())) {
+    return Error::RunFailed;
   }
 
   std::cout << "[5/5] build graph (dot/png/svg)\n";
-  if (!buildGraph(irForGraph, rtLog, dot)) {
-    return 5;
+  if (!buildGraph(irForGraph, runtimeLogPath.string(), dotPath.string())) {
+    return Error::GraphBuildFailed;
   }
 
   std::cout << "\nDone.\n";
-  std::cout << "Output folder: " << root << "\n";
-  std::cout << "  IR:   " << irForGraph << "\n";
-  std::cout << "  log:  " << rtLog << "\n";
-  std::cout << "  dot:  " << dot << "\n";
-  if (endsWith(dot, ".dot")) {
-    std::cout << "  png:  " << dot.substr(0, dot.size() - 4)
-              << ".png\n"; // TODO[flops]: This is part of buildGraph too,
-                           // separate it and reuse
-    std::cout << "  svg:  " << dot.substr(0, dot.size() - 4) << ".svg\n";
-  }
   return 0;
 }
 
-int main(int argc, char **argv) {
-  if (argc <
-      2) { // [flops]: Note if your prog must take at least one argument then
-           // it's better to use them without `-` prefix, like `defuse-analyzer
-           // analyze` (This is similar to git add e.t.c)
-    printHelp(); // [flops]: But that's cool that you control program scenarios
-                 // via cli args
+static int handleGraphCmd(int argc, char **argv) {
+  if (argc < 3) {
+    std::cerr << "error: -graph <in.ll> [runtime.log] [out.dot]\n";
     return 1;
   }
 
-  // TODO[flops]: There are a lot of path / string utils there, transfer it to
-  // separate file / use funcs from LLVM / C++ stdlib
+  std::string inLl = argv[2];
+  std::string rt = (argc >= 4) ? argv[3] : "";
+  std::string outDot = (argc >= 5) ? argv[4] : "enhanced_graph.dot";
 
-  std::string cmd = argv[1];
-
-  if (cmd == "--help" || cmd == "-h" || cmd == "help") {
-    printHelp();
-    return 0;
-  }
-
-  if (!cmd.empty() && cmd[0] == '-') {
-    if (cmd == "-analyze") {
-      if (argc < 3) {
-        std::cerr << "error: -analyze needs <input.c|input.ll>\n";
-        return 1;
-      }
-      std::string input = argv[2];
-      std::string outDir = (argc >= 4) ? argv[3] : "";
-      return doAnalyze(input, outDir);
-    }
-
-    if (cmd == "-emit-llvm") {
-      if (argc < 4) {
-        std::cerr << "error: -emit-llvm <file.c> <out.ll>\n";
-        return 1;
-      }
-      return emitllFromC(argv[2], argv[3]) ? 0 : 2;
-    }
-
-    if (cmd == "-mem2reg") {
-      if (argc < 4) {
-        std::cerr << "error: -mem2reg <in.ll> <out.ll>\n";
-        return 1;
-      }
-      return mem2reg(argv[2], argv[3]) ? 0 : 2;
-    }
-
-    if (cmd == "-instrument") {
-      if (argc < 4) {
-        std::cerr << "error: -instrument <in.ll> <out.ll>\n";
-        return 1;
-      }
-      return instrumentLl(argv[2], argv[3]) ? 0 : 2;
-    }
-
-    if (cmd == "-run") {
-      if (argc < 4) {
-        std::cerr << "error: -run <instrumented.ll> <runtime.log> [out_exe]\n";
-        return 1;
-      }
-      std::string exe = (argc >= 5) ? argv[4] : "";
-      return buildAndRun(argv[2], argv[3], exe) ? 0 : 2;
-    }
-
-    if (cmd == "-graph") { // TODO[Dkay]: argument parsing / dispatching should
-                           // be a function
-      if (argc < 3) {
-        std::cerr
-            << "error: -graph <in.ll> [runtime.log] [out.dot]\n"; // TODO[Dkay]:
-                                                                  // Should be a
-                                                                  // function
-        return 1;
-      }
-      std::string inLl = argv[2];
-      std::string rt = (argc >= 4) ? argv[3] : "";
-      std::string outDot = (argc >= 5) ? argv[4] : "enhanced_graph.dot";
-      return buildGraph(inLl, rt, outDot) ? 0 : 2;
-    }
-
-    std::cerr << "error: unknown option: " << cmd << "\n";
-    printHelp();
-    return 1; // FIXME [Dkay]: magic const
-  }
-
-  // TODO[DKay]: next two lines looks like a function to me
-  std::cerr << "error: unknown command: " << cmd << "\n";
-  printHelp();
-  return 1;
+  return buildGraph(inLl, rt, outDot) ? 0 : 2;
 }
