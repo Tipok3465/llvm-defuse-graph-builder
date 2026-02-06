@@ -1,106 +1,136 @@
 #ifndef GRAPH_VISUALIZER_H
 #define GRAPH_VISUALIZER_H
 
-#include "llvm/IR/Value.h"
-#include <cstdint> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
 #include <map>
-#include <set> //TODO[Dkay]: my LSP says that this header is unused. Pls, setup yours too
+#include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-// FIXME{Dkay}: this is weird. Why not to use `#inlcude` directive like
-// everyone?
-namespace llvm {
-class Value;
-class Instruction;
-class BasicBlock;
-class Function;
-class Module;
-class TerminatorInst;
-} // namespace llvm
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/CFG.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Value.h"
 
-class GraphVisualizer {
+enum class NodeType { // enum really looks MUCH better here
+  Instruction,
+  BasicBlock,
+  Argument,
+  Constant,
+  UnknownType,
+};
+
+enum class MyError {
+  none,
+  bad_input,
+  cannot_open_file,
+  runtime_log_parse,
+  dot_export_failed,
+  graphviz_failed
+};
+
+struct GraphNode {
+  llvm::Value *value = nullptr;
+  std::string id;
+  std::string label;
+  std::string type;
+  std::string runtimeValue;
+
+  NodeType nodeType = NodeType::UnknownType;
+  bool isTerminator = false;
+  bool hasRuntimeValue = false;
+
+  llvm::BasicBlock *ownerBlock = nullptr;
+
+  std::vector<std::string> operands;
+  std::vector<std::string> defUseSuccessors;
+  std::vector<std::string> cfgSuccessors;
+
+  std::string functionName;
+};
+
+class GraphVisualizer final {
 public:
   GraphVisualizer();
-
-  // FIXME[Dkay]: Class should be either marked final or have an virtual dtor
-  // FIXME[Dkay]: break of the rule of zero: class has untrivial dtor
-  // FIXME[Dkay]: break of the rule of five: class has untrivial dtor and has not copy-, move- operators and copy-, move- ctors
-  ~GraphVisualizer();
+  ~GraphVisualizer() = default;
 
   bool buildCombinedGraph(llvm::Module &module,
                           const std::string &runtimeLogFile = "");
 
-  bool exportToDot(const std::string &filename) const;
+  bool exportToDot(const std::string &filename);
 
-  void printStatistics() const;
+  void printStatistics();
+
+  MyError lastError() const;
+  const std::string &lastErrorMessage() const;
 
 private:
-  // TODO[Dkay]: why to hide GraphNode interface inside, move it outside the class to improve code radability.
-  struct GraphNode {
-    llvm::Value *value = nullptr;
-    std::string id;
-    std::string label;
-    std::string type;
+  int basicBlockCount_ = 0;
+
+  struct EdgeInfo {
+    std::string from;
+    std::string to;
     std::string runtimeValue;
-
-    bool isInstruction =
-        false; // FIXME[flops]: Use enum for this or determine value type via
-               // llvm isa (or dyn_cast: it uses isa and casts value to needed
-               // class if possible)
-               // [Dkay]: +++
-    
-    bool isBasicBlock = false;
-    bool isConstant = false;
-    bool isArgument = false;
-    bool isTerminator = false;
-    bool hasRuntimeValue = false;
-
-    llvm::BasicBlock *parentBlock = nullptr; // TODO[flops]: use union there
-
-    std::vector<std::string> operands;
-    std::vector<std::string> defUseSuccessors;
-    std::vector<std::string> cfgSuccessors;
-
-    std::string functionName;
-  };
-
-  struct BasicBlockInfo { // FIXME[flops]: BasicBlock class already contains
-                          // that info
-    std::string id;
-    std::string label;
-    llvm::BasicBlock *blockPtr = nullptr;
-    std::vector<std::string> instructions;
-    std::string functionName;
   };
 
   bool loadRuntimeValues(const std::string &logFile);
 
-  std::string getNodeId(llvm::Value *value) const;
-  std::string getValueLabel(llvm::Value *value) const;
+  void calcStatistics();
+  void createArgNodes(llvm::Function &function, const std::string &funcName);
+  void createConstNode(llvm::Value *operand, const std::string &funcName,
+                       const std::string &operandId, const std::string &baseId);
+  void createInstrNodes(llvm::Instruction &instr, const std::string &funcName,
+                        llvm::BasicBlock &block);
+  void createEdges(llvm::BasicBlock &block,
+                   std::set<std::pair<std::string, std::string>> &cfgSeen,
+                   int &callOrderCounter);
+
+  std::optional<std::string>
+  findRuntimeValueByKeys(const std::vector<std::string> &keys) const;
+  void applyRuntimeValue(GraphNode &node, const std::string &value);
+
+  GraphNode makeArgumentNode(llvm::Argument &arg, const std::string &funcName);
+
+  std::string getNodeId(llvm::Value *value);
+  std::string getValueLabel(llvm::Value *value);
   std::string getInstructionType(llvm::Instruction *instr) const;
   std::string getInstructionLabel(llvm::Instruction &instr) const;
   std::string getBasicBlockLabel(llvm::BasicBlock &block) const;
   std::string escapeForDot(const std::string &text) const;
   std::string getInstructionName(llvm::Instruction &instr) const;
-  std::string getShortInstructionLabel(const GraphNode &node) const;
+  std::string getShortInstructionLabel(const GraphNode &node);
 
   std::unordered_map<std::string, GraphNode> nodes_;
-  std::unordered_map<std::string, BasicBlockInfo> basicBlocks_;
   std::unordered_map<std::string, std::string> runtimeValues_;
 
-  bool runtimeValuesLoaded_;
+  void clearError();
+  void setError(MyError code, const std::string &msg);
 
-  struct FunctionCallInfo { // FIXME[Dkay]: llvm's function callee has same info
-    std::string caller;
-    std::string callee;
-    int callOrder;
+  bool runtimeValuesLoaded_ = false;
+
+  struct CallEdge {
+    const llvm::Function *callee = nullptr;
     std::string callSiteId;
+    int callOrder = 0;
   };
+  std::vector<CallEdge> callEdges_;
+  std::map<const llvm::Function *, std::string> functionToEntryNode_;
 
-  std::vector<FunctionCallInfo> functionCalls_;
-  std::map<std::string, std::string> functionToEntryNode_;
+  int instrCount_ = 0;
+  int constCount_ = 0;
+  int argCount_ = 0;
+  int bbCount_ = 0;
+  int cfgEdges_ = 0;
+  int duEdges_ = 0;
+  int runtimeCount_ = 0;
+
+  MyError lastError_ = MyError::none;
+  std::string lastErrorMsg_;
 };
 
 #endif // GRAPH_VISUALIZER_H
