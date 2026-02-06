@@ -94,6 +94,8 @@ private:
   findRuntimeValueByKeys(const std::vector<std::string> &keys) const;
   void applyRuntimeValue(GraphNode &node, const std::string &value);
 
+  GraphNode makeArgumentNode(llvm::Argument &arg, const std::string &funcName);
+
   std::string getNodeId(llvm::Value *value);
   std::string getValueLabel(llvm::Value *value);
   std::string getInstructionType(llvm::Instruction *instr) const;

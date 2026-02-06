@@ -49,22 +49,23 @@ void GraphVisualizer::applyRuntimeValue(GraphNode &node,
   node.label += "    VALUE=" + value;
 }
 
+GraphNode GraphVisualizer::makeArgumentNode(llvm::Argument &arg,
+                                            const std::string &funcName) {
+  GraphNode node;
+  node.id = getNodeId(&arg);
+  node.label = getValueLabel(&arg);
+  node.type = "argument";
+  node.nodeType = NodeType::Argument;
+  node.value = &arg;
+  node.functionName = funcName;
+  return node;
+}
+
 void GraphVisualizer::createArgNodes(llvm::Function &function,
                                      const std::string &funcName) {
   for (auto &arg : function.args()) {
     std::string nodeId = getNodeId(&arg);
-    GraphNode node; // [flops]: Use = designated initializer GraphNode node =
-                    // {.id=nodeId, ...};
-
-    // FIXME[Dkay]: At the point of this comment you have a GraphNode instance
-    // with broken invariants, please, learn more about classes and
-    // constructors before using them
-    node.id = nodeId;
-    node.label = getValueLabel(&arg);
-    node.type = "argument";
-    node.nodeType = NodeType::Argument;
-    node.value = &arg;
-    node.functionName = funcName;
+    GraphNode node = makeArgumentNode(arg, funcName);
 
     // runtime value for args
     if (runtimeValuesLoaded_) {
