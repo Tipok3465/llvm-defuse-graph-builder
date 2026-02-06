@@ -2,6 +2,8 @@
 #define GRAPH_VISUALIZER_H
 
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -79,6 +81,18 @@ private:
   bool loadRuntimeValues(const std::string &logFile);
 
   void calcStatistics();
+  void createArgNodes(llvm::Function &function, const std::string &funcName);
+  void createConstNode(llvm::Value *operand, const std::string &funcName,
+                       const std::string &operandId, const std::string &baseId);
+  void createInstrNodes(llvm::Instruction &instr, const std::string &funcName,
+                        llvm::BasicBlock &block);
+  void createEdges(llvm::BasicBlock &block,
+                   std::set<std::pair<std::string, std::string>> &cfgSeen,
+                   int &callOrderCounter);
+
+  std::optional<std::string>
+  findRuntimeValueByKeys(const std::vector<std::string> &keys) const;
+  void applyRuntimeValue(GraphNode &node, const std::string &value);
 
   std::string getNodeId(llvm::Value *value);
   std::string getValueLabel(llvm::Value *value);

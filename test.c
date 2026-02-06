@@ -12,8 +12,8 @@ static int compute(int a, int b) {
   int sum2 = sum + 2;
   int prod = a * b;
 
-  if (sum > prod)
-    return sum;
+  if (sum2 > prod)
+    return sum2;
   return prod;
 }
 

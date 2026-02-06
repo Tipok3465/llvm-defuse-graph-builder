@@ -1,7 +1,10 @@
 #include <fstream>
 #include <iostream>
+#include <llvm-18/llvm/IR/Instruction.h>
+#include <llvm-18/llvm/IR/Value.h>
 #include <set>
 #include <sstream>
+#include <string>
 
 #include "GraphVisualizer.h"
 #include "llvm/IR/Constants.h"
@@ -28,184 +31,252 @@ const std::string &GraphVisualizer::lastErrorMessage() const {
   return lastErrorMsg_;
 }
 
-// FIXME[Dkay] Bro. I'm tilted as fuck. I have NOT taught you like that. Why
-// the fuck do you have a 300+ LOC function?
-bool GraphVisualizer::buildCombinedGraph(Module &module,
-                                         const std::string &runtimeLogFile) {
-  // FIXME[Dkay]: if you need to reset those fields, then why do you store them
-  // as fields and not locals?
-  nodes_.clear(); // TODO[flops]: Make reset method and use it there
-  runtimeValues_.clear();
-  functionToEntryNode_.clear();
-  runtimeValuesLoaded_ = false;
+std::optional<std::string> GraphVisualizer::findRuntimeValueByKeys(
+    const std::vector<std::string> &keys) const {
+  for (const auto &key : keys) {
+    auto it = runtimeValues_.find(key);
+    if (it != runtimeValues_.end() && !it->second.empty()) {
+      return it->second;
+    }
+  }
+  return std::nullopt;
+}
 
-  // FIXME[Dkay]: i dont want logging in production mode. make it turnable-off
-  // with defines, or some logging lib
-  std::cout << "Building combined CFG + Def-Use graph...\n";
+void GraphVisualizer::applyRuntimeValue(GraphNode &node,
+                                        const std::string &value) {
+  node.runtimeValue = value;
+  node.hasRuntimeValue = true;
+  node.label += "    VALUE=" + value;
+}
 
-  if (!runtimeLogFile.empty()) {
-    runtimeValuesLoaded_ = loadRuntimeValues(
-        runtimeLogFile); // TODO [Dkay] Why return value is used only for
-                         // logging? What if its broken? You just continue
-                         // execution
+void GraphVisualizer::createArgNodes(llvm::Function &function,
+                                     const std::string &funcName) {
+  for (auto &arg : function.args()) {
+    std::string nodeId = getNodeId(&arg);
+    GraphNode node; // [flops]: Use = designated initializer GraphNode node =
+                    // {.id=nodeId, ...};
+
+    // FIXME[Dkay]: At the point of this comment you have a GraphNode instance
+    // with broken invariants, please, learn more about classes and
+    // constructors before using them
+    node.id = nodeId;
+    node.label = getValueLabel(&arg);
+    node.type = "argument";
+    node.nodeType = NodeType::Argument;
+    node.value = &arg;
+    node.functionName = funcName;
+
+    // runtime value for args
     if (runtimeValuesLoaded_) {
-      std::cout << "  Loaded " << runtimeValues_.size() << " runtime values\n";
+      const std::string argName = arg.getName().str();
+      const std::vector<std::string> possibleKeys = {
+          nodeId,
+          funcName + "_%" + argName,
+          "%" + argName,
+          argName,
+      };
+      if (auto val = findRuntimeValueByKeys(possibleKeys)) {
+        applyRuntimeValue(node, *val);
+      }
+    }
+
+    nodes_[nodeId] = node;
+  }
+}
+
+void GraphVisualizer::createConstNode(llvm::Value *operand,
+                                      const std::string &funcName,
+                                      const std::string &operandId,
+                                      const std::string &baseId) {
+  if (nodes_.find(operandId) == nodes_.end()) {
+    GraphNode constNode;
+    constNode.id = operandId;
+    constNode.label = getValueLabel(operand);
+    constNode.type = "constant";
+    constNode.nodeType = NodeType::Constant;
+    constNode.value = operand;
+    constNode.functionName = funcName;
+
+    if (runtimeValuesLoaded_) {
+      std::vector<std::string> keys;
+      keys.push_back(operandId);
+      keys.push_back(baseId);
+      keys.push_back(getValueLabel(operand));
+      if (auto *ci = dyn_cast<ConstantInt>(operand)) {
+        keys.push_back(std::to_string(ci->getSExtValue()));
+      }
+
+      for (const auto &k : keys) {
+        auto it = runtimeValues_.find(k);
+        if (it != runtimeValues_.end() && !it->second.empty()) {
+          constNode.runtimeValue = it->second;
+          constNode.hasRuntimeValue = true;
+          constNode.label = constNode.label + "    VALUE=" + it->second;
+          break;
+        }
+      }
+    }
+
+    nodes_[operandId] = constNode;
+  }
+}
+
+void GraphVisualizer::createInstrNodes(llvm::Instruction &instr,
+                                       const std::string &funcName,
+                                       llvm::BasicBlock &block) {
+  std::string instrId = getNodeId(&instr);
+  GraphNode node;
+  node.id = instrId;
+  node.label = getInstructionLabel(instr);
+  node.type = getInstructionType(&instr);
+  node.nodeType = NodeType::Instruction;
+  node.isTerminator = instr.isTerminator();
+  node.value = &instr;
+  node.ownerBlock = &block;
+  node.functionName = funcName;
+
+  if (runtimeValuesLoaded_) {
+    std::string instrName = getInstructionName(instr);
+    std::vector<std::string> possibleKeys = {instrId,
+                                             funcName + "_%" +
+                                                 instr.getName().str(),
+                                             funcName + "::" + instrName,
+                                             instrName,
+                                             "%" + instr.getName().str(),
+                                             getShortInstructionLabel(node)};
+
+    for (const auto &key : possibleKeys) {
+      auto it = runtimeValues_.find(key);
+      if (it != runtimeValues_.end() && !it->second.empty()) {
+        node.runtimeValue = it->second;
+        node.hasRuntimeValue = true;
+
+        std::string instrText = getInstructionLabel(instr);
+        while (!instrText.empty() &&
+               (instrText.back() == '\n' || instrText.back() == ' ')) {
+          instrText.pop_back();
+        }
+        node.label = instrText + "    VALUE=" + it->second;
+        break;
+      }
     }
   }
 
-  // FIXME[Dkay]: Why this is not a method?
-  // create nodes for all functions, basic blocks, instructions, arguments
+  for (unsigned i = 0; i < instr.getNumOperands(); i++) {
+    Value *operand = instr.getOperand(i);
+
+    if (isa<BasicBlock>(operand) || isa<MetadataAsValue>(operand)) {
+      continue;
+    }
+
+    bool isConst = isa<ConstantInt>(operand) || isa<ConstantFP>(operand);
+
+    std::string baseId = getNodeId(operand);
+    // i wanna make constants inside function blocks
+    // it looks much prettier
+    std::string operandId = isConst ? (funcName + "::" + baseId) : baseId;
+    if (isConst && nodes_.find(operandId) == nodes_.end()) {
+      createConstNode(operand, funcName, operandId, baseId);
+    }
+    node.operands.push_back(operandId);
+  }
+  nodes_[instrId] = node;
+}
+
+void GraphVisualizer::createEdges(
+    llvm::BasicBlock &block,
+    std::set<std::pair<std::string, std::string>> &cfgSeen,
+    int &callOrderCounter) {
+  std::string prevId;
+  bool havePrev = false;
+
+  for (auto &instr : block) {
+    std::string curId = getNodeId(&instr);
+    if (havePrev) {
+      if (cfgSeen.insert({prevId, curId}).second) {
+        nodes_[prevId].cfgSuccessors.push_back(curId);
+      }
+    }
+    prevId = curId;
+    havePrev = true;
+  }
+
+  if (auto *terminator = block.getTerminator()) {
+    std::string termId = getNodeId(terminator);
+
+    for (unsigned i = 0; i < terminator->getNumSuccessors(); i++) {
+      BasicBlock *succ = terminator->getSuccessor(i);
+      Instruction *firstInstr = succ->getFirstNonPHI();
+
+      if (!firstInstr)
+        continue;
+
+      std::string firstId = getNodeId(firstInstr);
+      if (cfgSeen.insert({termId, firstId}).second) {
+        nodes_[termId].cfgSuccessors.push_back(firstId);
+      }
+    }
+  }
+
+  // def-use + call edges
+  for (auto &instr : block) {
+    std::string instrId = getNodeId(&instr);
+    for (const auto &operandId : nodes_[instrId].operands) {
+      if (nodes_.find(operandId) != nodes_.end()) {
+        nodes_[operandId].defUseSuccessors.push_back(instrId);
+      }
+    }
+
+    if (auto *callInst = dyn_cast<CallInst>(&instr)) {
+      if (Function *calledFunc = callInst->getCalledFunction()) {
+        if (!calledFunc->isDeclaration()) {
+          CallEdge e;
+          e.callee = calledFunc;
+          e.callSiteId = instrId;
+          e.callOrder = ++callOrderCounter;
+          callEdges_.push_back(e);
+        }
+      }
+    }
+  }
+}
+
+bool GraphVisualizer::buildCombinedGraph(Module &module,
+                                         const std::string &runtimeLogFile) {
+
+  // std::cout << "Building combined CFG + Def-Use graph...\n";
+
+  if (!runtimeLogFile.empty()) {
+    runtimeValuesLoaded_ = loadRuntimeValues(runtimeLogFile);
+    if (runtimeValuesLoaded_) {
+      std::cout << "  Loaded " << runtimeValues_.size() << " runtime values\n";
+    } else {
+      std::cout << "  Warning: failed to load runtime values, continuing "
+                   "without them\n";
+    }
+  }
+
   for (auto &function : module) {
     if (function.isDeclaration())
       continue;
     std::string funcName = function.getName().str();
 
-    for (auto &arg : function.args()) {
-      std::string nodeId = getNodeId(&arg);
-      GraphNode node; // [flops]: Use = designated initializer GraphNode node =
-                      // {.id=nodeId, ...};
-
-      // FIXME[Dkay]: At the point of this comment you have a GraphNode instance
-      // with broken invariants, please, learn more about classes and
-      // constructors before using them
-      node.id = nodeId;
-      node.label = getValueLabel(&arg);
-      node.type = "argument";
-      node.nodeType = NodeType::Argument;
-      node.value = &arg;
-      node.functionName = funcName;
-
-      // FIXME[Dkay]: Why this is not a method? + What is happend here is
-      // unclear to me. Please, work on architecture of your solution
-      //
-      // runtime value for args
-      if (runtimeValuesLoaded_) {
-        std::string argName = arg.getName().str();
-        std::vector<std::string> possibleKeys = {
-            nodeId, funcName + "_%" + argName, "%" + argName, argName};
-
-        // TODO[Dkay]: As I said above its unclear to me, but you probably can
-        // use some regular expressions here
-        for (const auto &key : possibleKeys) {
-          auto it = runtimeValues_.find(key);
-          if (it != runtimeValues_.end() && !it->second.empty()) {
-            node.runtimeValue = it->second;
-            node.hasRuntimeValue = true;
-            node.label = node.label + "    VALUE=" + it->second;
-            break;
-          }
-        }
-      }
-
-      nodes_[nodeId] = node;
-    }
+    createArgNodes(function, funcName);
 
     for (auto &block : function) {
       std::string blockId = getNodeId(&block);
       basicBlockCount_++;
 
       for (auto &instr : block) {
-        std::string instrId = getNodeId(&instr);
-        GraphNode node;
-        node.id = instrId;
-        node.label = getInstructionLabel(instr);
-        node.type = getInstructionType(&instr);
-        node.nodeType = NodeType::Instruction;
-        node.isTerminator = instr.isTerminator();
-        node.value = &instr;
-        node.ownerBlock = &block;
-        node.functionName = funcName;
-
-        if (runtimeValuesLoaded_) {
-          std::string instrName = getInstructionName(instr);
-          std::vector<std::string> possibleKeys = {
-              instrId,
-              funcName + "_%" + instr.getName().str(),
-              funcName + "::" + instrName,
-              instrName,
-              "%" + instr.getName().str(),
-              getShortInstructionLabel(node)};
-
-          for (const auto &key : possibleKeys) {
-            auto it = runtimeValues_.find(key);
-            if (it != runtimeValues_.end() && !it->second.empty()) {
-              node.runtimeValue = it->second;
-              node.hasRuntimeValue = true;
-
-              std::string instrText = getInstructionLabel(instr);
-              while (!instrText.empty() &&
-                     (instrText.back() == '\n' || instrText.back() == ' ')) {
-                instrText.pop_back();
-              }
-              node.label = instrText + "    VALUE=" + it->second;
-              break;
-            }
-          }
-        }
-
-        for (unsigned i = 0; i < instr.getNumOperands(); i++) {
-          Value *operand = instr.getOperand(i);
-
-          if (isa<BasicBlock>(operand) || isa<MetadataAsValue>(operand)) {
-            continue;
-          }
-
-          bool isConst = isa<ConstantInt>(operand) || isa<ConstantFP>(operand);
-
-          std::string baseId = getNodeId(operand);
-          // i wanna make constants inside function blocks
-          // it looks much prettier
-          std::string operandId = isConst ? (funcName + "::" + baseId) : baseId;
-
-          if (isConst) {
-            if (nodes_.find(operandId) == nodes_.end()) {
-              GraphNode constNode;
-              constNode.id = operandId;
-              constNode.label = getValueLabel(operand);
-              constNode.type = "constant";
-              constNode.nodeType = NodeType::Constant;
-              constNode.value = operand;
-              constNode.functionName = funcName;
-
-              if (runtimeValuesLoaded_) {
-                std::vector<std::string> keys;
-                keys.push_back(operandId);
-                keys.push_back(baseId);
-                keys.push_back(getValueLabel(operand));
-                if (auto *ci = dyn_cast<ConstantInt>(operand)) {
-                  keys.push_back(std::to_string(ci->getSExtValue()));
-                }
-
-                for (const auto &k : keys) {
-                  auto it = runtimeValues_.find(k);
-                  if (it != runtimeValues_.end() && !it->second.empty()) {
-                    constNode.runtimeValue = it->second;
-                    constNode.hasRuntimeValue = true;
-                    constNode.label =
-                        constNode.label + "    VALUE=" + it->second;
-                    break;
-                  }
-                }
-              }
-
-              nodes_[operandId] = constNode;
-            }
-          }
-
-          node.operands.push_back(operandId);
-        }
-
-        nodes_[instrId] = node;
+        createInstrNodes(instr, funcName, block);
       }
     }
   }
 
   // build edges. i really fucked up here
   int callOrderCounter = 0;
-
   // for avoiding duplicating
   std::set<std::pair<std::string, std::string>> cfgSeen;
-
   for (auto &function : module) {
     if (function.isDeclaration())
       continue;
@@ -218,60 +289,8 @@ bool GraphVisualizer::buildCombinedGraph(Module &module,
         break;
       }
     }
-
     for (auto &block : function) {
-      std::string prevId;
-      bool havePrev = false;
-
-      for (auto &instr : block) {
-        std::string curId = getNodeId(&instr);
-        if (havePrev) {
-          if (cfgSeen.insert({prevId, curId}).second) {
-            nodes_[prevId].cfgSuccessors.push_back(curId);
-          }
-        }
-        prevId = curId;
-        havePrev = true;
-      }
-
-      if (auto *terminator = block.getTerminator()) {
-        std::string termId = getNodeId(terminator);
-
-        for (unsigned i = 0; i < terminator->getNumSuccessors(); i++) {
-          BasicBlock *succ = terminator->getSuccessor(i);
-          Instruction *firstInstr = succ->getFirstNonPHI();
-
-          if (!firstInstr)
-            continue;
-
-          std::string firstId = getNodeId(firstInstr);
-          if (cfgSeen.insert({termId, firstId}).second) {
-            nodes_[termId].cfgSuccessors.push_back(firstId);
-          }
-        }
-      }
-
-      // def-use + call edges
-      for (auto &instr : block) {
-        std::string instrId = getNodeId(&instr);
-        for (const auto &operandId : nodes_[instrId].operands) {
-          if (nodes_.find(operandId) != nodes_.end()) {
-            nodes_[operandId].defUseSuccessors.push_back(instrId);
-          }
-        }
-
-        if (auto *callInst = dyn_cast<CallInst>(&instr)) {
-          if (Function *calledFunc = callInst->getCalledFunction()) {
-            if (!calledFunc->isDeclaration()) {
-              CallEdge e;
-              e.callee = calledFunc;
-              e.callSiteId = instrId;
-              e.callOrder = ++callOrderCounter;
-              callEdges_.push_back(e);
-            }
-          }
-        }
-      }
+      createEdges(block, cfgSeen, callOrderCounter);
     }
   }
 
